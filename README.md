@@ -28,8 +28,8 @@ A web application that generates personalized recipe recommendations based on av
 
 ## Team
 
-| Role | Members |
-|------|---------|
-| Frontend | Rhea, Adiam |
-| Backend | Lena, Jesica |
+| Role | Members | Tasks | 
+|------|---------|-------|
+| Frontend | Rhea, Adiam | User interface, image upload, preferences selection, recipe display |
+| Backend | Lena, Jesica | API development, computer vision integration, recipe recommendation logic |
 
