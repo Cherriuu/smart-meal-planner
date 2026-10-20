@@ -1,76 +1,30 @@
-# smart-meal-planner
-GWC group project
+# Smart Meal Planner (GWC Group Project)
 
-# Smart Meal Planner
+A web application that generates personalized recipe recommendations based on available ingredients, dietary preferences, kitchen appliances, serving sizes, and occasions. The application will use computer vision to identify ingredients from uploaded photos, allowing users to discover recipes they can prepare with what they already have.
 
-A web app that recommends personalized recipes based on the ingredients you already have. Upload a photo of your pantry, review the detected ingredients, set your preferences, and get recipes you can make without a grocery run.
+## Proposed Features
 
-## Features
+- **Kitchen Appliances:** Users can select which appliances they have available (e.g., oven, microwave, air fryer, toaster). Recipes requiring unavailable appliances will be excluded.
+- **Dietary and Nutritional Preferences:** Users can specify calorie goals and nutritional preferences, such as higher protein or lower sugar intake.
+- **Pantry Inventory (Computer Vision):** Users can upload photos of their available ingredients. Computer vision will identify the ingredients, and users can review or manually adjust the results.
+- Users should be able to review detected ingredients and approve of it before getting any recipes
+- **Ingredient-Based Recipe Recommendations:** The application will recommend recipes that can be prepared using the user's available ingredients, without requiring additional grocery purchases.
+- **Serving Sizes:** Users can specify how many people they are cooking for, allowing recipe quantities to be adjusted accordingly.
+- **Occasion Selection:** Users can choose an occasion, such as a casual meal, family dinner, birthday party, potluck, or holiday gathering. Recipe recommendations will be tailored to the selected occasion.
+- **Recipe Sorting:** Matching recipes will be displayed in order of shortest to longest total preparation and cooking time.
 
-- **Pantry scan:** upload photos of your ingredients and let computer vision identify them
-- **Ingredient review:** confirm, edit, or remove detected ingredients before getting recipes
-- **Kitchen appliances:** select what you own (oven, microwave, air fryer, etc.) and recipes needing anything else are excluded
-- **Dietary preferences:** set calorie goals and nutrition preferences like higher protein or lower sugar
-- **Serving sizes:** scale recipe quantities to the number of people you're cooking for
-- **Occasions:** tailor suggestions to a casual meal, family dinner, birthday, potluck, or holiday
-- **Smart sorting:** recipes are shown from shortest to longest total prep and cook time
 
 ## Tech Stack
 
 | Area | Technology |
 |------|------------|
 | Frontend | JavaScript, HTML, CSS |
-| Dev environment | Node.js (Vite) |
+| Dev environment | Node.js |
 | Backend | Python, FastAPI |
 | Computer vision | TBD |
-| Recipe data | TBD |
-| Database | TBD |
+| Recipe data API | TBD |
+| Database |  Will be implemented depending on other features or changes |
 | Deployment | TBD |
-
-## Getting Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18 or later)
-- npm (comes with Node.js)
-- The backend running locally (see the backend README)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/<your-org>/smart-meal-planner.git
-cd smart-meal-planner
-
-# Install dependencies
-npm install
-
-# Set up environment variables
-cp .env.example .env
-
-# Start the dev server
-npm run dev
-```
-
-The app will be available at `http://localhost:5173`.
-
-### Environment Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `VITE_API_URL` | Base URL of the FastAPI backend | `http://localhost:8000` |
-
-## Project Structure
-
-```
-src/
-├── api/          # Calls to the backend
-├── components/   # Reusable UI components
-├── pages/        # Main app views
-├── state/        # Shared app state
-├── utils/        # Helper functions
-└── styles/       # CSS files
-```
 
 ## Team
 
@@ -79,21 +33,3 @@ src/
 | Frontend | Rhea, Adiam |
 | Backend | Lenaa, Jesica |
 
-## Contributing
-
-1. Pull the latest `main`: `git pull origin main`
-2. Create a branch: `git checkout -b feature/your-feature-name`
-3. Commit your changes with clear messages
-4. Push and open a pull request
-5. Get at least one teammate to review before merging
-
-Please don't commit directly to `main` and never commit your `.env` file.
-
-## Roadmap
-
-- [ ] Project setup and base layout
-- [ ] Appliance and preference selection
-- [ ] Image upload and ingredient review
-- [ ] Recipe results and sorting
-- [ ] Serving size scaling and occasion filters
-- [ ] Deployment
