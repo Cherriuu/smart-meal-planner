@@ -31,5 +31,5 @@ A web application that generates personalized recipe recommendations based on av
 | Role | Members |
 |------|---------|
 | Frontend | Rhea, Adiam |
-| Backend | Lenaa, Jesica |
+| Backend | Lena, Jesica |
 
