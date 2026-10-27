@@ -1,0 +1,74 @@
+{
+  "recipes": [
+    {
+      "id": 643514,
+      "title": "Fresh Herb Omelette",
+      "image": "https://img.spoonacular.com/recipes/643514-312x231.jpg",
+      "readyInMinutes": 10,
+      "servings": 1,
+      "calories": 260,
+      "ingredients": [
+        { "name": "egg", "amount": 3, "unit": "" },
+        { "name": "butter", "amount": 1, "unit": "tbsp" },
+        { "name": "fresh chives", "amount": 1, "unit": "tbsp" },
+        { "name": "fresh parsley", "amount": 1, "unit": "tbsp" },
+        { "name": "fresh dill", "amount": 1, "unit": "tsp" }
+      ],
+      "steps": [
+        "Finely chop the chives, parsley and dill.",
+        "Whisk the eggs with a pinch of salt and pepper, then stir in the herbs.",
+        "Melt the butter in a nonstick pan over medium heat.",
+        "Pour in the eggs and cook, gently pulling the edges toward the center, until almost set.",
+        "Fold the omelette in half and slide it onto a plate."
+      ],
+      "appliances": ["stove"]
+    },
+    {
+      "id": 665734,
+      "title": "Zucchini Chicken Omelette",
+      "image": "https://img.spoonacular.com/recipes/665734-312x231.jpg",
+      "readyInMinutes": 25,
+      "servings": 2,
+      "calories": 340,
+      "ingredients": [
+        { "name": "egg", "amount": 4, "unit": "" },
+        { "name": "zucchini", "amount": 1, "unit": "" },
+        { "name": "cooked chicken breast", "amount": 100, "unit": "g" },
+        { "name": "onion", "amount": 0.5, "unit": "" },
+        { "name": "olive oil", "amount": 1, "unit": "tbsp" }
+      ],
+      "steps": [
+        "Dice the onion and slice the zucchini into thin half-moons.",
+        "Shred the cooked chicken into bite-size pieces.",
+        "Heat the olive oil in a pan and cook the onion and zucchini until soft, about 5 minutes.",
+        "Add the chicken and warm it through.",
+        "Whisk the eggs with salt and pepper, pour over the vegetables and cook until set.",
+        "Fold, cut in half and serve."
+      ],
+      "appliances": ["stove"]
+    },
+    {
+      "id": 1697687,
+      "title": "Spinach Mushroom Omelette with Parmesan",
+      "image": "https://img.spoonacular.com/recipes/1697687-312x231.jpg",
+      "readyInMinutes": 15,
+      "servings": 1,
+      "calories": 310,
+      "ingredients": [
+        { "name": "egg", "amount": 3, "unit": "" },
+        { "name": "spinach", "amount": 1, "unit": "cup" },
+        { "name": "mushrooms", "amount": 60, "unit": "g" },
+        { "name": "parmesan cheese", "amount": 2, "unit": "tbsp" },
+        { "name": "butter", "amount": 1, "unit": "tbsp" }
+      ],
+      "steps": [
+        "Slice the mushrooms.",
+        "Melt the butter in a pan and cook the mushrooms until golden, about 4 minutes.",
+        "Add the spinach and stir until wilted.",
+        "Whisk the eggs with salt and pepper and pour them over the vegetables.",
+        "Cook until almost set, sprinkle with parmesan, fold and serve."
+      ],
+      "appliances": ["stove"]
+    }
+  ]
+}
