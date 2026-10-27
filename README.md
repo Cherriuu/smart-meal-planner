@@ -26,6 +26,38 @@ A web application that generates personalized recipe recommendations based on av
 | Database |  Will be implemented depending on other features or changes |
 | Deployment | TBD |
 
+## Running the backend
+
+1. Go into the backend folder:
+   ```bash
+   cd backend
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   # Mac
+   python3 -m venv venv
+   source venv/bin/activate
+
+   # Windows
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+3. Install the dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Create your `.env` file. Leave the keys blank to use the sample data:
+   ```bash
+   cp .env.example .env
+   ```
+5. Start the server:
+   ```bash
+   uvicorn main:app --reload
+   ```
+6. Check that it works:
+   - http://localhost:8000/health should return `"status": "ok"`
+   - http://localhost:8000/docs shows every endpoint, and you can try them from there
+
 ## Team
 
 | Role | Members | Tasks | 
