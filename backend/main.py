@@ -1,16 +1,27 @@
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 load_dotenv()
 
 SPOONACULAR_API_KEY = os.getenv("SPOONACULAR_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
+# Stop when Spoonacular reports fewer points left than this (one search is ~1.55 points)
+QUOTA_RESERVE = 5
+
+# In-memory search counter for the current UTC day (resets on server restart)
+search_count = 0
+search_date = None
+# Points left on the shared key, from Spoonacular's last response (None = unknown)
+quota_left = None
 
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
@@ -29,7 +40,30 @@ def load_sample(filename):
         return json.load(f)
 
 
+def daily_limit_reached():
+    global search_count, search_date, quota_left
+    today = datetime.now(timezone.utc).date()
+    if search_date != today:
+        search_date = today
+        search_count = 0
+        quota_left = None
+    if quota_left is not None and quota_left < QUOTA_RESERVE:
+        return True
+    return search_count >= DAILY_SEARCH_LIMIT
+
+
+def daily_limit_response():
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "daily_limit",
+            "message": "We've hit today's recipe limit. Please try again tomorrow!",
+        },
+    )
+
+
 def search_spoonacular(ingredients):
+    global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe
     params = {
         "includeIngredients": ",".join(ingredients),
@@ -48,6 +82,13 @@ def search_spoonacular(ingredients):
         headers=headers,
         timeout=10,
     )
+    # Count here: the request reached Spoonacular, even if it returned an error
+    search_count += 1
+    # Spoonacular's own count for the whole key, so it includes teammates' searches
+    try:
+        quota_left = float(response.headers["X-API-Quota-Left"])
+    except (KeyError, ValueError):
+        pass  # header missing or not a number: keep the previous value
     response.raise_for_status()
     return response.json()
 
@@ -117,5 +158,13 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
 
 @app.post("/api/recipes")
 def get_recipes(request: RecipeRequest):
-    data = search_spoonacular(request.ingredients)
+    if daily_limit_reached():
+        return daily_limit_response()
+    try:
+        data = search_spoonacular(request.ingredients)
+    except httpx.HTTPStatusError as error:
+        # 402 means Spoonacular says our daily points are used up
+        if error.response.status_code == 402:
+            return daily_limit_response()
+        raise
     return {"recipes": [format_recipe(raw) for raw in data["results"]]}
