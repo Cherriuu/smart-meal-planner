@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 
 load_dotenv()
@@ -16,6 +18,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
 # Stop when Spoonacular reports fewer points left than this (one search is ~1.55 points)
 QUOTA_RESERVE = 5
+GEMINI_MODEL = "gemini-3.6-flash"
 
 # In-memory search counter for the current UTC day (resets on server restart)
 search_count = 0
@@ -150,10 +153,28 @@ def health():
     }
 
 
+def detect_foods_with_gemini(images):
+    # Send all photos in one request; Gemini answers with a JSON list of food names
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    parts = [
+        types.Part.from_bytes(data=image.file.read(), mime_type=image.content_type)
+        for image in images
+    ]
+    prompt = "List every food item you can see in these photos, as short names like 'egg' or 'cheddar cheese'."
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=parts + [prompt],
+        config={
+            "response_mime_type": "application/json",
+            "response_json_schema": {"type": "array", "items": {"type": "string"}},
+        },
+    )
+    return json.loads(response.text)
+
+
 @app.post("/api/detect-ingredients")
 def detect_ingredients(images: list[UploadFile] = File(...)):
-    # TODO (#6): send the images to Gemini
-    return load_sample("detect_ingredients.json")
+    return {"ingredients": detect_foods_with_gemini(images)}
 
 
 @app.post("/api/recipes")
