@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -156,9 +156,20 @@ def format_recipe(raw):
 class RecipeRequest(BaseModel):
     ingredients: list[str]
     appliances: list[str] = []
-    servings: int = 2
+    servings: int = Field(2, ge=1, le=50)
     occasion: str = "casual"
     maxCalories: int | None = None
+
+
+def scale_servings(recipe, servings):
+    # Multiply every amount so the recipe feeds `servings` people (2 -> 6 triples it)
+    original = recipe["servings"]
+    if not original:
+        return  # unknown serving size, nothing to scale from
+    factor = servings / original
+    for ingredient in recipe["ingredients"]:
+        ingredient["amount"] = round(ingredient["amount"] * factor, 2)
+    recipe["servings"] = servings
 
 
 @app.get("/health")
@@ -250,6 +261,9 @@ def get_recipes(request: RecipeRequest):
                 return daily_limit_response()
             raise
         recipes = [format_recipe(raw) for raw in data["results"]]
+
+    for recipe in recipes:
+        scale_servings(recipe, request.servings)
 
     # Quickest first; recipes without a time go last
     recipes.sort(key=lambda recipe: (recipe["readyInMinutes"] is None, recipe["readyInMinutes"] or 0))
