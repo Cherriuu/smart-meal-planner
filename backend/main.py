@@ -19,6 +19,23 @@ DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
 # Stop when Spoonacular reports fewer points left than this (one search is ~1.55 points)
 QUOTA_RESERVE = 5
 GEMINI_MODEL = "gemini-3.6-flash"
+# Items left out of ingredient lists: drinks that aren't ingredients, plus basics
+# everyone has (salt, pepper, oil). Reused by #9.
+SKIPPED_INGREDIENTS = {
+    "water", "sparkling water", "soda", "ice", "ice cube",
+    "salt", "pepper", "black pepper",
+    "oil", "olive oil", "vegetable oil", "cooking oil",
+}
+# Size words that aren't a real variety ("baby carrot" is just "carrot")
+SIZE_PREFIXES = ("baby ", "mini ")
+# Plurals the simple rules in singular() get wrong ("pies" would become "py")
+IRREGULAR_PLURALS = {
+    "pies": "pie",
+    "cookies": "cookie",
+    "brownies": "brownie",
+    "leaves": "leaf",
+    "loaves": "loaf",
+}
 
 # In-memory search counter for the current UTC day (resets on server restart)
 search_count = 0
@@ -160,7 +177,11 @@ def detect_foods_with_gemini(images):
         types.Part.from_bytes(data=image.file.read(), mime_type=image.content_type)
         for image in images
     ]
-    prompt = "List every food item you can see in these photos, as short names like 'egg' or 'cheddar cheese'."
+    prompt = (
+        "List every food item you can see in these photos. "
+        "Use singular, lowercase, common names: 'egg' not 'eggs', "
+        "'basil' not 'basil leaves', 'cheddar cheese' not 'Cheddar Cheese'."
+    )
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=parts + [prompt],
@@ -172,9 +193,42 @@ def detect_foods_with_gemini(images):
     return json.loads(response.text)
 
 
+def singular(name):
+    # Only the last word is plural: "cherry tomatoes" -> "cherry tomato"
+    words = name.split(" ")
+    last = words[-1]
+    if last in IRREGULAR_PLURALS:
+        last = IRREGULAR_PLURALS[last]
+    elif last in ("hummus", "couscous", "asparagus", "molasses", "swiss"):
+        pass
+    elif last.endswith("ies"):
+        last = last[:-3] + "y"  # berries -> berry
+    elif last.endswith(("oes", "ches", "shes", "xes")):
+        last = last[:-2]  # tomatoes -> tomato, peaches -> peach
+    elif last.endswith("s") and not last.endswith(("ss", "us", "is")):
+        last = last[:-1]  # eggs -> egg
+    words[-1] = last
+    return " ".join(words)
+
+
+def clean_ingredients(names):
+    cleaned = []
+    for name in names:
+        name = " ".join(name.lower().split())  # lowercase, tidy spaces
+        for prefix in SIZE_PREFIXES:
+            rest = name[len(prefix):]
+            # Keep "mini pepper": without the prefix it would be dropped as a basic
+            if name.startswith(prefix) and singular(rest) not in SKIPPED_INGREDIENTS:
+                name = rest
+        name = singular(name)
+        if name and name not in SKIPPED_INGREDIENTS and name not in cleaned:
+            cleaned.append(name)
+    return cleaned
+
+
 @app.post("/api/detect-ingredients")
 def detect_ingredients(images: list[UploadFile] = File(...)):
-    return {"ingredients": detect_foods_with_gemini(images)}
+    return {"ingredients": clean_ingredients(detect_foods_with_gemini(images))}
 
 
 @app.post("/api/recipes")
