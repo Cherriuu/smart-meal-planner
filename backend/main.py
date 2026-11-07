@@ -228,6 +228,9 @@ def clean_ingredients(names):
 
 @app.post("/api/detect-ingredients")
 def detect_ingredients(images: list[UploadFile] = File(...)):
+    # No key means local testing: use sample data instead of calling Gemini
+    if not GEMINI_API_KEY:
+        return load_sample("detect_ingredients.json")
     return {"ingredients": clean_ingredients(detect_foods_with_gemini(images))}
 
 
