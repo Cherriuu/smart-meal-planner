@@ -238,14 +238,19 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
 def get_recipes(request: RecipeRequest):
     # No key means local testing: use sample data and skip the daily limit
     if not SPOONACULAR_API_KEY:
-        return load_sample("recipes.json")
-    if daily_limit_reached():
-        return daily_limit_response()
-    try:
-        data = search_spoonacular(request.ingredients)
-    except httpx.HTTPStatusError as error:
-        # 402 means Spoonacular says our daily points are used up
-        if error.response.status_code == 402:
+        recipes = load_sample("recipes.json")["recipes"]
+    else:
+        if daily_limit_reached():
             return daily_limit_response()
-        raise
-    return {"recipes": [format_recipe(raw) for raw in data["results"]]}
+        try:
+            data = search_spoonacular(request.ingredients)
+        except httpx.HTTPStatusError as error:
+            # 402 means Spoonacular says our daily points are used up
+            if error.response.status_code == 402:
+                return daily_limit_response()
+            raise
+        recipes = [format_recipe(raw) for raw in data["results"]]
+
+    # Quickest first; recipes without a time go last
+    recipes.sort(key=lambda recipe: (recipe["readyInMinutes"] is None, recipe["readyInMinutes"] or 0))
+    return {"recipes": recipes}
