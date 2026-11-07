@@ -158,6 +158,9 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
 
 @app.post("/api/recipes")
 def get_recipes(request: RecipeRequest):
+    # No key means local testing: use sample data and skip the daily limit
+    if not SPOONACULAR_API_KEY:
+        return load_sample("recipes.json")
     if daily_limit_reached():
         return daily_limit_response()
     try:
