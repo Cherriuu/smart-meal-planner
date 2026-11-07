@@ -19,6 +19,15 @@ DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
 # Stop when Spoonacular reports fewer points left than this (one search is ~1.55 points)
 QUOTA_RESERVE = 5
 GEMINI_MODEL = "gemini-3.6-flash"
+# Spoonacular recipe types for each occasion; several types mean "any of these".
+# An empty list, or an occasion not listed here, searches all types.
+OCCASION_TYPES = {
+    "casual": [],
+    "family dinner": ["main course"],
+    "birthday party": ["fingerfood", "appetizer", "dessert"],
+    "potluck": ["side dish", "appetizer"],
+    "holiday gathering": ["main course", "side dish", "dessert"],
+}
 # Items left out of ingredient lists: drinks that aren't ingredients, plus basics
 # everyone has (salt, pepper, oil). Reused by #9.
 SKIPPED_INGREDIENTS = {
@@ -82,7 +91,7 @@ def daily_limit_response():
     )
 
 
-def search_spoonacular(ingredients):
+def search_spoonacular(ingredients, occasion):
     global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe
     params = {
@@ -94,6 +103,10 @@ def search_spoonacular(ingredients):
         "fillIngredients": True,
         "sort": "max-used-ingredients",
     }
+    # "Potluck " and "potluck" should match the same entry
+    recipe_types = OCCASION_TYPES.get(occasion.strip().lower(), [])
+    if recipe_types:
+        params["type"] = ",".join(recipe_types)
     # Key goes in a header, not the URL, so it never shows up in error messages
     headers = {"x-api-key": SPOONACULAR_API_KEY}
     response = httpx.get(
@@ -254,7 +267,7 @@ def get_recipes(request: RecipeRequest):
         if daily_limit_reached():
             return daily_limit_response()
         try:
-            data = search_spoonacular(request.ingredients)
+            data = search_spoonacular(request.ingredients, request.occasion)
         except httpx.HTTPStatusError as error:
             # 402 means Spoonacular says our daily points are used up
             if error.response.status_code == 402:
