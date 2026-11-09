@@ -280,8 +280,8 @@ a.card:hover { border-color: var(--color-primary); }
 }
 .check__input:checked + .check__box::after { transform: rotate(45deg) scale(1); }
 
-/* Checked items get crossed out (nice for ingredient and grocery lists) */
-.check__input:checked ~ .check__label {
+/* Add the check--strike class (class="check check--strike") on lists where checked items should look crossed off */
+.check--strike .check__input:checked ~ .check__label {
   color: var(--color-ink-soft);
   text-decoration: line-through;
 }
