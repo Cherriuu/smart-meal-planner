@@ -1,5 +1,5 @@
 import './style.css';
+import './shared-styles.css';
+import { renderPreferences } from './preferences.js';
 
-document.querySelector('#app').innerHTML = `
-  <h1>Smart Meal Planner</h1>
-`;
+renderPreferences(document.querySelector('#app'));
