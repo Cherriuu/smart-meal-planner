@@ -1,5 +1,5 @@
 import './style.css';
 import './shared-styles.css';
-import { renderPreferences } from './preferences.js';
+import { startWizard } from './wizard.js';
 
-renderPreferences(document.querySelector('#app'));
+startWizard(document.querySelector('#app'));
