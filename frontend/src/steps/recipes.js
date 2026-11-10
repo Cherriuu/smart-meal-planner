@@ -23,6 +23,9 @@ function recipeCard(recipe) {
     recipe.calories != null ? `${recipe.calories} cal` : null,
     recipe.servings != null ? `${recipe.servings} servings` : null,
   ].filter(Boolean).join(' · ');
+  const missing = recipe.missingIngredients?.length
+    ? `<p class="text-soft">You'll also need: ${escapeHtml(recipe.missingIngredients.join(', '))}</p>`
+    : '';
 
   const ingredients = recipe.ingredients
     .map((i) => `<li>${escapeHtml([i.amount, i.unit, i.name].filter((part) => part !== '' && part != null).join(' '))}</li>`)
@@ -35,6 +38,7 @@ function recipeCard(recipe) {
       <div class="card__body">
         <h2 class="recipes__title">${escapeHtml(recipe.title)}</h2>
         <p class="card__meta">${escapeHtml(meta)}</p>
+        ${missing}
         <details>
           <summary>Ingredients and steps</summary>
           <h3 class="recipes__subtitle">Ingredients</h3>
