@@ -4,17 +4,16 @@ import { getPreferences } from '../preferences.js';
 import { getRecipes } from '../api/client.js';
 import { escapeHtml, friendlyError } from '../util.js';
 
-// The preferences page and the backend name two occasions differently.
-const OCCASION_FOR_API = { Birthday: 'birthday party', Holiday: 'holiday gathering' };
-
 function buildRequest() {
   const prefs = getPreferences();
   return {
     ingredients: checkedIngredients(),
     appliances: prefs.appliances,
     servings: prefs.servings,
-    occasion: OCCASION_FOR_API[prefs.occasion] ?? prefs.occasion,
+    occasion: prefs.occasion,
     maxCalories: prefs.maxCalories === '' ? null : prefs.maxCalories,
+    highProtein: prefs.highProtein,
+    lowSugar: prefs.lowSugar,
   };
 }
 
