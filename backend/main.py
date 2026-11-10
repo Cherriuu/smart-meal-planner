@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import httpx
@@ -16,7 +17,8 @@ load_dotenv()
 SPOONACULAR_API_KEY = os.getenv("SPOONACULAR_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
-# Stop when Spoonacular reports fewer points left than this (one search is ~1.55 points)
+# Stop when Spoonacular reports fewer points left than this (one search is ~3.2 points,
+# ~4.2 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
 GEMINI_MODEL = "gemini-3.6-flash"
 # Spoonacular recipe types for each occasion; several types mean "any of these".
@@ -28,13 +30,61 @@ OCCASION_TYPES = {
     "potluck": ["side dish", "appetizer"],
     "holiday": ["main course", "side dish", "dessert"],
 }
+# Nutrition limits in grams per serving, sent to Spoonacular
+HIGH_PROTEIN_MIN = 20
+LOW_SUGAR_MAX = 10
+# Keep recipes that need at most this many foods the user doesn't have (basics don't count)
+MAX_MISSING_INGREDIENTS = 2
 # Items left out of ingredient lists: drinks that aren't ingredients, plus basics
-# everyone has (salt, pepper, oil). Reused by #9.
+# everyone has (salt, pepper, oil). Recipes may use these without the user listing them.
 SKIPPED_INGREDIENTS = {
     "water", "sparkling water", "soda", "ice", "ice cube",
-    "salt", "pepper", "black pepper",
-    "oil", "olive oil", "vegetable oil", "cooking oil",
+    "salt", "kosher salt", "sea salt", "pepper", "black pepper", "salt and pepper",
+    "oil", "olive oil", "vegetable oil", "cooking oil", "cooking spray", "nonstick cooking spray",
+    "butter",
 }
+# Kitchen supplies Spoonacular lists as ingredients or equipment (singular, like
+# normalize_name gives). Never "missing", and not shown as appliances.
+NON_FOOD = {
+    "paper towel", "aluminum foil", "parchment paper", "plastic wrap",
+    "wax paper", "toothpick", "kitchen twine",
+}
+# Words that can come before a food and still be that food ("cherry tomato" is a tomato,
+# "sundried tomato" isn't)
+VARIETY_WORDS = {
+    "cherry", "roma", "grape", "plum", "corn", "flour", "whole wheat",
+    "mild", "sharp", "extra sharp", "baby", "red", "white", "yellow", "green",
+    "large", "medium", "small", "fresh", "organic",
+}
+# "... butter" counts as butter (a basic), except these nut and seed butters
+NUT_BUTTERS = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
+               "pistachio", "macadamia", "sunflower seed", "nut")
+# Different names for the same food, mapped to the name Spoonacular uses
+INGREDIENT_ALIASES = {
+    "scallion": "green onion",
+    "spring onion": "green onion",
+    "coriander": "cilantro",
+    "garbanzo bean": "chickpea",
+    "capsicum": "bell pepper",
+}
+# Spoonacular equipment names -> appliances on the preferences page.
+# Equipment not listed here (bowl, whisk, knife...) doesn't need an appliance.
+EQUIPMENT_TO_APPLIANCE = {
+    "oven": "Oven", "baking sheet": "Oven", "baking pan": "Oven",
+    "casserole dish": "Oven", "loaf pan": "Oven", "muffin tray": "Oven",
+    "roasting pan": "Oven",
+    "frying pan": "Stovetop", "pan": "Stovetop", "pot": "Stovetop",
+    "saucepan": "Stovetop", "sauce pan": "Stovetop", "skillet": "Stovetop",
+    "wok": "Stovetop", "stove": "Stovetop",
+    "microwave": "Microwave",
+    "air fryer": "Air fryer",
+    "toaster": "Toaster",
+}
+# Backup for incomplete equipment lists: steps with these words need an oven
+OVEN_WORDS = re.compile(r"\b(bake|baked|preheat|oven)\b", re.IGNORECASE)
+# Spoonacular sometimes lists equipment as an ingredient ("12-inch skillet").
+# Whole words only, so "potato" doesn't match "pot".
+EQUIPMENT_WORDS = re.compile(r"\b(" + "|".join(re.escape(name) for name in EQUIPMENT_TO_APPLIANCE) + r")\b")
 # Size words that aren't a real variety ("baby carrot" is just "carrot")
 SIZE_PREFIXES = ("baby ", "mini ")
 # Plurals the simple rules in singular() get wrong ("pies" would become "py")
@@ -91,22 +141,29 @@ def daily_limit_response():
     )
 
 
-def search_spoonacular(ingredients, occasion):
+def search_spoonacular(request):
     global search_count, quota_left
-    # One complexSearch call returns everything we need for every recipe
+    # One complexSearch call returns everything we need for every recipe.
+    # Ask for 20 because our filters drop recipes that need foods the user doesn't have.
     params = {
-        "includeIngredients": ",".join(ingredients),
-        "number": 5,
+        "includeIngredients": ",".join(request.ingredients),
+        "number": 20,
         "addRecipeInformation": True,
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
         "fillIngredients": True,
-        "sort": "max-used-ingredients",
+        "sort": "min-missing-ingredients",
     }
     # "Potluck " and "potluck" should match the same entry
-    recipe_types = OCCASION_TYPES.get(occasion.strip().lower(), [])
+    recipe_types = OCCASION_TYPES.get(request.occasion.strip().lower(), [])
     if recipe_types:
         params["type"] = ",".join(recipe_types)
+    if request.maxCalories is not None:
+        params["maxCalories"] = request.maxCalories
+    if request.highProtein:
+        params["minProtein"] = HIGH_PROTEIN_MIN
+    if request.lowSugar:
+        params["maxSugar"] = LOW_SUGAR_MAX
     # Key goes in a header, not the URL, so it never shows up in error messages
     headers = {"x-api-key": SPOONACULAR_API_KEY}
     response = httpx.get(
@@ -136,7 +193,8 @@ def format_recipe(raw):
 
     ingredients = [
         {
-            "name": item["name"],
+            # nameClean drops extras like "fresh", so the ingredient filter matches more often
+            "name": item.get("nameClean") or item["name"],
             "amount": item["amount"],
             "unit": item.get("measures", {}).get("us", {}).get("unitShort", ""),
         }
@@ -150,7 +208,7 @@ def format_recipe(raw):
         for step in section["steps"]:
             steps.append(step["step"])
             for equipment in step.get("equipment", []):
-                if equipment["name"] not in appliances:
+                if equipment["name"] not in appliances and normalize_name(equipment["name"]) not in NON_FOOD:
                     appliances.append(equipment["name"])
 
     return {
@@ -172,7 +230,7 @@ class RecipeRequest(BaseModel):
     servings: int = Field(2, ge=1, le=50)
     occasion: str = "casual"
     maxCalories: int | None = None
-    # Accepted from the preferences page; used in the search by #9
+    # Sent to Spoonacular as minProtein / maxSugar (see HIGH_PROTEIN_MIN, LOW_SUGAR_MAX)
     highProtein: bool = False
     lowSugar: bool = False
 
@@ -238,19 +296,105 @@ def singular(name):
     return " ".join(words)
 
 
+def normalize_name(name):
+    # One spelling per food, so "Baby Scallions" and "green onion" compare equal
+    name = name.lower().split(" - ")[0]  # "egg - beat" -> "egg"
+    name = " ".join(name.replace("&", " and ").split())  # "salt & pepper", tidy spaces
+    for prefix in SIZE_PREFIXES:
+        rest = name[len(prefix):]
+        # Keep "mini pepper": without the prefix it would be dropped as a basic
+        if name.startswith(prefix) and singular(rest) not in SKIPPED_INGREDIENTS:
+            name = rest
+    name = singular(name)
+    if name.endswith(" leaf"):
+        name = name[:-len(" leaf")]  # "spinach leaf" -> "spinach"
+    if name.endswith(" butter") and not name[:-len(" butter")].endswith(NUT_BUTTERS):
+        name = "butter"  # "unsalted butter" -> "butter", but not "peanut butter"
+    return INGREDIENT_ALIASES.get(name, name)
+
+
 def clean_ingredients(names):
     cleaned = []
     for name in names:
-        name = " ".join(name.lower().split())  # lowercase, tidy spaces
-        for prefix in SIZE_PREFIXES:
-            rest = name[len(prefix):]
-            # Keep "mini pepper": without the prefix it would be dropped as a basic
-            if name.startswith(prefix) and singular(rest) not in SKIPPED_INGREDIENTS:
-                name = rest
-        name = singular(name)
+        name = normalize_name(name)
         if name and name not in SKIPPED_INGREDIENTS and name not in cleaned:
             cleaned.append(name)
     return cleaned
+
+
+def only_variety_words(text):
+    # True when every word is in VARIETY_WORDS ("whole wheat" counts as one)
+    words = text.split()
+    i = 0
+    while i < len(words):
+        if " ".join(words[i:i + 2]) in VARIETY_WORDS:
+            i += 2
+        elif words[i] in VARIETY_WORDS:
+            i += 1
+        else:
+            return False
+    return True
+
+
+def has_food(name, available):
+    # "cherry tomato" counts as "tomato", but "sundried tomato" and "potato" don't
+    for food in available:
+        if name == food:
+            return True
+        if name.endswith(" " + food) and only_variety_words(name[:-len(food)]):
+            return True
+    return False
+
+
+def foods_used(recipe, available):
+    # How many of the user's foods this recipe uses; each counts once, basics don't count
+    names = [normalize_name(ingredient["name"]) for ingredient in recipe["ingredients"]]
+    names = [name for name in names if name not in SKIPPED_INGREDIENTS and name not in NON_FOOD]
+    return sum(
+        1 for food in available
+        if food not in SKIPPED_INGREDIENTS and any(has_food(name, {food}) for name in names)
+    )
+
+
+def missing_ingredients(recipe, available):
+    # Display names of the foods this recipe needs that the user doesn't have.
+    # Basics (salt, oil, butter...), kitchen supplies and equipment listed as an ingredient don't count.
+    missing = []
+    for ingredient in recipe["ingredients"]:
+        name = normalize_name(ingredient["name"])
+        if name in SKIPPED_INGREDIENTS or name in NON_FOOD or EQUIPMENT_WORDS.search(name):
+            continue
+        if not has_food(name, available) and ingredient["name"] not in missing:
+            missing.append(ingredient["name"])
+    return missing
+
+
+def needs_only_selected_appliances(recipe, selected):
+    # `selected` is the user's appliances in lowercase
+    for equipment in recipe["appliances"]:
+        appliance = EQUIPMENT_TO_APPLIANCE.get(equipment.lower())
+        if appliance and appliance.lower() not in selected:
+            return False
+    if "oven" not in selected:
+        for step in recipe["steps"]:
+            if OVEN_WORDS.search(step):
+                return False
+    return True
+
+
+def fits_request(recipe, request):
+    # Also records what's missing on the recipe, since the response shows it
+    if not recipe["steps"]:
+        return False  # nothing to follow
+    selected ={appliance.strip().lower() for appliance in request.appliances}
+    # No appliances selected means the user didn't say, so don't filter by them
+    if selected and not needs_only_selected_appliances(recipe, selected):
+        return False
+    available = {normalize_name(name) for name in request.ingredients}
+    recipe["missingIngredients"] = missing_ingredients(recipe, available)
+    if len(recipe["missingIngredients"]) > MAX_MISSING_INGREDIENTS:
+        return False
+    return True
 
 
 @app.post("/api/detect-ingredients")
@@ -266,11 +410,17 @@ def get_recipes(request: RecipeRequest):
     # No key means local testing: use sample data and skip the daily limit
     if not SPOONACULAR_API_KEY:
         recipes = load_sample("recipes.json")["recipes"]
+        # Spoonacular applies maxCalories for real searches; do it here for sample data
+        if request.maxCalories is not None:
+            recipes = [
+                recipe for recipe in recipes
+                if recipe["calories"] is None or recipe["calories"] <= request.maxCalories
+            ]
     else:
         if daily_limit_reached():
             return daily_limit_response()
         try:
-            data = search_spoonacular(request.ingredients, request.occasion)
+            data = search_spoonacular(request)
         except httpx.HTTPStatusError as error:
             # 402 means Spoonacular says our daily points are used up
             if error.response.status_code == 402:
@@ -278,9 +428,19 @@ def get_recipes(request: RecipeRequest):
             raise
         recipes = [format_recipe(raw) for raw in data["results"]]
 
+    recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
+    # Fewest missing foods first, then the ones using most of the user's foods,
+    # then quickest; recipes without a time go last
+    available = {normalize_name(name) for name in request.ingredients}
+    recipes.sort(key=lambda recipe: (
+        len(recipe["missingIngredients"]),
+        -foods_used(recipe, available),
+        recipe["readyInMinutes"] is None,
+        recipe["readyInMinutes"] or 0,
+    ))
+    recipes = recipes[:5]
+
     for recipe in recipes:
         scale_servings(recipe, request.servings)
 
-    # Quickest first; recipes without a time go last
-    recipes.sort(key=lambda recipe: (recipe["readyInMinutes"] is None, recipe["readyInMinutes"] or 0))
     return {"recipes": recipes}
