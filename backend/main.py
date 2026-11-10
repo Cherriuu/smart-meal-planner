@@ -24,9 +24,9 @@ GEMINI_MODEL = "gemini-3.6-flash"
 OCCASION_TYPES = {
     "casual": [],
     "family dinner": ["main course"],
-    "birthday party": ["fingerfood", "appetizer", "dessert"],
+    "birthday": ["fingerfood", "appetizer", "dessert"],
     "potluck": ["side dish", "appetizer"],
-    "holiday gathering": ["main course", "side dish", "dessert"],
+    "holiday": ["main course", "side dish", "dessert"],
 }
 # Items left out of ingredient lists: drinks that aren't ingredients, plus basics
 # everyone has (salt, pepper, oil). Reused by #9.
@@ -172,6 +172,9 @@ class RecipeRequest(BaseModel):
     servings: int = Field(2, ge=1, le=50)
     occasion: str = "casual"
     maxCalories: int | None = None
+    # Accepted from the preferences page; used in the search by #9
+    highProtein: bool = False
+    lowSugar: bool = False
 
 
 def scale_servings(recipe, servings):
