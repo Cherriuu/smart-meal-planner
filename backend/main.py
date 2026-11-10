@@ -56,9 +56,11 @@ VARIETY_WORDS = {
     "mild", "sharp", "extra sharp", "baby", "red", "white", "yellow", "green",
     "large", "medium", "small", "fresh", "organic",
 }
-# "... butter" counts as butter (a basic), except these nut and seed butters
-NUT_BUTTERS = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
-               "pistachio", "macadamia", "sunflower seed", "nut")
+# "... butter" counts as butter (a basic), except these: nut and seed butters,
+# apple butter, cocoa butter, shea butter
+NOT_BUTTER = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
+              "pistachio", "macadamia", "sunflower seed", "nut",
+              "apple", "cocoa", "shea")
 # Different names for the same food, mapped to the name Spoonacular uses
 INGREDIENT_ALIASES = {
     "scallion": "green onion",
@@ -83,8 +85,8 @@ EQUIPMENT_TO_APPLIANCE = {
 # Backup for incomplete equipment lists: steps with these words need an oven
 OVEN_WORDS = re.compile(r"\b(bake|baked|preheat|oven)\b", re.IGNORECASE)
 # Spoonacular sometimes lists equipment as an ingredient ("12-inch skillet").
-# Whole words only, so "potato" doesn't match "pot".
-EQUIPMENT_WORDS = re.compile(r"\b(" + "|".join(re.escape(name) for name in EQUIPMENT_TO_APPLIANCE) + r")\b")
+# Only names ending in an equipment word, so "pot roast" and "potato" stay foods.
+EQUIPMENT_WORDS = re.compile(r"\b(" + "|".join(re.escape(name) for name in EQUIPMENT_TO_APPLIANCE) + r")$")
 # Size words that aren't a real variety ("baby carrot" is just "carrot")
 SIZE_PREFIXES = ("baby ", "mini ")
 # Plurals the simple rules in singular() get wrong ("pies" would become "py")
@@ -308,7 +310,7 @@ def normalize_name(name):
     name = singular(name)
     if name.endswith(" leaf"):
         name = name[:-len(" leaf")]  # "spinach leaf" -> "spinach"
-    if name.endswith(" butter") and not name[:-len(" butter")].endswith(NUT_BUTTERS):
+    if name.endswith(" butter") and not name[:-len(" butter")].endswith(NOT_BUTTER):
         name = "butter"  # "unsalted butter" -> "butter", but not "peanut butter"
     return INGREDIENT_ALIASES.get(name, name)
 
@@ -337,11 +339,14 @@ def only_variety_words(text):
 
 
 def has_food(name, available):
-    # "cherry tomato" counts as "tomato", but "sundried tomato" and "potato" don't
+    # "cherry tomato" counts as "tomato", but "sundried tomato" and "potato" don't.
+    # Works both ways: a user's "red bell pepper" covers a recipe's "bell pepper".
     for food in available:
         if name == food:
             return True
         if name.endswith(" " + food) and only_variety_words(name[:-len(food)]):
+            return True
+        if food.endswith(" " + name) and only_variety_words(food[:-len(name)]):
             return True
     return False
 
@@ -386,7 +391,7 @@ def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
         return False  # nothing to follow
-    selected ={appliance.strip().lower() for appliance in request.appliances}
+    selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
         return False
