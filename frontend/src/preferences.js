@@ -34,6 +34,15 @@ export function getPreferences() {
   }
 }
 
+// True once the user has saved their preferences at least once.
+export function hasSavedPreferences() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 // Returns an error message, or '' when the value is fine.
 function checkNumber(input, { label, min, max }, required) {
   if (input.validity.badInput) return `${label} must be a number.`;
@@ -45,7 +54,11 @@ function checkNumber(input, { label, min, max }, required) {
   return '';
 }
 
-export function renderPreferences(root) {
+// Options (used by the wizard):
+//   embedded: true  -> no <main> wrapper and no Save button (the wizard's Next button saves)
+//   onSubmit        -> called after a successful save when the user presses Enter in a field
+// Returns { save }, where save() validates, stores, and returns true when everything is fine.
+export function renderPreferences(root, { embedded = false, onSubmit } = {}) {
   const prefs = getPreferences();
 
   const appliancePills = APPLIANCES.map(
@@ -64,9 +77,8 @@ export function renderPreferences(root) {
     (name) => `<option ${name === prefs.occasion ? 'selected' : ''}>${name}</option>`
   ).join('');
 
-  root.innerHTML = `
-    <main class="page stack--lg">
-      <h1>Your preferences</h1>
+  const content = `
+      <h1 id="step-title" tabindex="-1">Your preferences</h1>
 
       <form class="prefs" id="prefs-form" novalidate>
         <section class="prefs__section">
@@ -126,12 +138,12 @@ export function renderPreferences(root) {
         </section>
 
         <div class="row">
-          <button class="btn" type="submit">Save preferences</button>
+          ${embedded ? '' : '<button class="btn" type="submit">Save preferences</button>'}
           <p class="text-soft" id="prefs-status" role="status"></p>
         </div>
       </form>
-    </main>
   `;
+  root.innerHTML = embedded ? content : `<main class="page stack--lg">${content}</main>`;
 
   const form = root.querySelector('#prefs-form');
   const calories = form.elements.maxCalories;
@@ -159,15 +171,14 @@ export function renderPreferences(root) {
     status.textContent = '';
   });
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-
+  // Validates, then stores the choices. Returns true when they were saved.
+  function save() {
     // Check again on save, in case a bad value was pasted in.
     const caloriesOk = validate(calories, LIMITS.calories, false);
     const servingsOk = validate(servings, LIMITS.servings, true);
     if (!caloriesOk || !servingsOk) {
       (caloriesOk ? servings : calories).focus();
-      return;
+      return false;
     }
 
     const saved = {
@@ -181,9 +192,18 @@ export function renderPreferences(root) {
 
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-      status.textContent = 'Preferences saved.';
+      status.textContent = embedded ? '' : 'Preferences saved.';
+      return true;
     } catch {
       status.textContent = "Couldn't save your preferences. Try again.";
+      return false;
     }
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (save() && onSubmit) onSubmit();
   });
+
+  return { save };
 }

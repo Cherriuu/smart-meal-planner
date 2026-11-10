@@ -4,7 +4,15 @@ async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, options);
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    // The backend sends a friendly "message" for some errors (like the daily limit)
+    let message = `Request failed: ${response.status}`;
+    try {
+      const body = await response.json();
+      if (typeof body.message === 'string') message = body.message;
+    } catch {
+      // body wasn't JSON: keep the generic message
+    }
+    throw new Error(message);
   }
 
   return response.json();
