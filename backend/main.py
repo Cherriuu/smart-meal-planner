@@ -66,8 +66,9 @@ SALT_PEPPER_WORDS = {"salt", "pepper", "black", "sea"}
 # Nutrition limits in grams per serving, sent to Spoonacular
 HIGH_PROTEIN_MIN = 20
 LOW_SUGAR_MAX = 10
-# Keep recipes that need at most this many foods the user doesn't have (basics don't count)
-MAX_MISSING_INGREDIENTS = 2
+# Missing foods are mainly for ranking (fewest missing first, see get_recipes). This is only
+# a safety net: recipes needing more than this many foods the user doesn't have are dropped.
+MAX_MISSING_INGREDIENTS = 5
 # Items left out of ingredient lists: drinks that aren't ingredients, plus basics
 # everyone has (salt, pepper, oil). Recipes may use these without the user listing them.
 SKIPPED_INGREDIENTS = {
