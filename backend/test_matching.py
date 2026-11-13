@@ -43,6 +43,18 @@ SHOULD_MATCH_PAIRS = [
     ("chicken", ["chicken thigh"]),
 ]
 
+# Messy Spoonacular names (when nameClean is missing) for a user with these foods
+PRODUCE_USER = ["lemon", "broccoli", "cauliflower", "parmesan cheese"]
+SHOULD_MATCH_MESSY = [
+    "head of broccoli",
+    "broccoli florets",
+    "cauliflower florets",
+    "juice from a lemon",
+    "lemon juice",
+    "zest of 1 lemon",
+    "grated parmesan",
+]
+
 # (recipe ingredient, user foods) pairs that must NOT match
 SHOULD_NOT_MATCH = [
     ("butter", ["peanut butter"]),
@@ -67,6 +79,7 @@ SHOULD_NOT_MATCH = [
     ("beef", ["beef jerky"]),
     ("apple", ["apple pie"]),
     ("lemon", ["lemon pepper"]),
+    ("lemon pepper", ["lemon"]),  # a seasoning, not a lemon
 ]
 
 failures = []
@@ -76,6 +89,9 @@ for ingredient in SHOULD_MATCH:
 for ingredient, foods in SHOULD_MATCH_PAIRS:
     if not covered(ingredient, foods):
         failures.append(f"should match but doesn't: {ingredient!r} for {foods}")
+for ingredient in SHOULD_MATCH_MESSY:
+    if not covered(ingredient, PRODUCE_USER):
+        failures.append(f"should match but doesn't: {ingredient!r} for {PRODUCE_USER}")
 for ingredient, foods in SHOULD_NOT_MATCH:
     if covered(ingredient, foods):
         failures.append(f"matches but shouldn't: {ingredient!r} for {foods}")
@@ -92,7 +108,14 @@ missing = missing_ingredients(spiced, {normalize_name("egg")})
 if missing != []:
     failures.append(f"spices reported missing: {missing}")
 
+# "a couple of pepper flakes" is a spice: never missing. The messy produce names aren't missing either.
+messy = {"ingredients": [{"name": name} for name in SHOULD_MATCH_MESSY + ["a couple of pepper flakes"]]}
+missing = missing_ingredients(messy, {normalize_name(food) for food in PRODUCE_USER})
+if missing != []:
+    failures.append(f"messy names reported missing: {missing}")
+
 for failure in failures:
     print("FAIL:", failure)
 assert not failures, f"{len(failures)} matching check(s) failed"
-print(f"All {len(SHOULD_MATCH) + len(SHOULD_MATCH_PAIRS) + len(SHOULD_NOT_MATCH) + 2} matching checks passed")
+total = len(SHOULD_MATCH) + len(SHOULD_MATCH_PAIRS) + len(SHOULD_MATCH_MESSY) + len(SHOULD_NOT_MATCH) + 3
+print(f"All {total} matching checks passed")

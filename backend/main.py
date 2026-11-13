@@ -125,6 +125,12 @@ DIFFERENT_PRODUCT_WORDS = {
 # (user's food, recipe's food) pairs that are never the same food. "cheese" can't go in
 # DIFFERENT_PRODUCT_WORDS, since "parmesan cheese" must still cover "parmesan".
 NOT_THE_SAME = {("cream cheese", "cream")}
+# Prep words that can be dropped from the front of a recipe's food before checking if a
+# user's more specific food covers it: "grated parmesan" -> "parmesan" (covered by
+# "parmesan cheese"). Colors and sizes aren't here: "red pepper" isn't just "pepper".
+PREP_WORDS = {"shredded", "grated", "diced", "chopped", "minced", "sliced", "cooked", "fresh", "frozen", "canned"}
+# Parts of a food: a recipe's "lemon juice" or "lemon zest" is covered by the user's "lemon"
+PART_WORDS = {"juice", "zest"}
 # "... butter" counts as butter (a basic), except these: nut and seed butters,
 # apple butter, cocoa butter, shea butter
 NOT_BUTTER = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
@@ -136,7 +142,7 @@ NOT_OIL = ("sesame", "truffle", "chili")
 # includeIngredients, so they don't steer which recipes come back
 SPICES = {
     "paprika", "garlic powder", "onion powder", "cumin", "chili powder",
-    "oregano", "basil", "thyme", "cinnamon", "red pepper flake", "italian seasoning",
+    "oregano", "basil", "thyme", "cinnamon", "red pepper flake", "pepper flake", "italian seasoning",
 }
 # Different names for the same food, mapped to the name Spoonacular uses
 INGREDIENT_ALIASES = {
@@ -166,6 +172,15 @@ OVEN_WORDS = re.compile(r"\b(bake|baked|preheat|oven)\b", re.IGNORECASE)
 EQUIPMENT_WORDS = re.compile(r"\b(" + "|".join(re.escape(name) for name in EQUIPMENT_TO_APPLIANCE) + r")$")
 # Size words that aren't a real variety ("baby carrot" is just "carrot")
 SIZE_PREFIXES = ("baby ", "mini ")
+# Quantity and part phrases Spoonacular sometimes leaves at the start of a name
+# ("head of broccoli", "juice from a lemon", "zest of 1 lemon"). Removed repeatedly,
+# longest first, so "juice from a lemon" -> "a lemon" -> "lemon".
+LEADING_PHRASES = sorted([
+    "head of", "heads of", "juice from", "juice of", "zest of", "a couple of", "couple of",
+    "at least", "a few", "some", "can of", "cans of", "bunch of", "handful of",
+    "piece of", "pieces of", "a", "an", "of",
+], key=len, reverse=True)
+LEADING_NUMBER = re.compile(r"^[\d½¼¾⅓⅔⅛]+(?:[./]\d+)?\s+")  # "1 lemon", "1/2 onion"
 # Plurals the simple rules in singular() get wrong ("pies" would become "py")
 IRREGULAR_PLURALS = {
     "pies": "pie",
@@ -311,8 +326,8 @@ def search_spoonacular(request):
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
         "fillIngredients": True,
-        # Our own filter handles missing foods, so rank by how many of the user's foods are used
-        "sort": "max-used-ingredients",
+        # Ask for recipes needing the fewest extra foods; our own ranking sorts them again
+        "sort": "min-missing-ingredients",
         "ignorePantry": True,
     }
     # Send all of the occasion's meal types ("Potluck" -> "side dish,appetizer"). The docs only
@@ -578,14 +593,16 @@ def normalize_name(name):
     # One spelling per food, so "Baby Scallions" and "green onion" compare equal
     name = name.lower().split(" - ")[0]  # "egg - beat" -> "egg"
     name = " ".join(name.replace("&", " and ").split())  # "salt & pepper", tidy spaces
+    name = strip_leading_phrases(name)  # "head of broccoli" -> "broccoli"
     for prefix in SIZE_PREFIXES:
         rest = name[len(prefix):]
         # Keep "mini pepper": without the prefix it would be dropped as a basic
         if name.startswith(prefix) and singular(rest) not in SKIPPED_INGREDIENTS:
             name = rest
     name = singular(name)
-    if name.endswith(" leaf"):
-        name = name[:-len(" leaf")]  # "spinach leaf" -> "spinach"
+    for part in (" leaf", " floret"):
+        if name.endswith(part):
+            name = name[:-len(part)]  # "spinach leaf" -> "spinach", "broccoli floret" -> "broccoli"
     if name.endswith(" butter") and not name[:-len(" butter")].endswith(NOT_BUTTER):
         name = "butter"  # "unsalted butter" -> "butter", but not "peanut butter"
     if name.endswith(" oil") and not name[:-len(" oil")].endswith(NOT_OIL):
@@ -593,6 +610,19 @@ def normalize_name(name):
     if is_salt_or_pepper(name):
         name = "salt and pepper"  # a basic; "bell pepper" and "pepper jack" aren't
     return INGREDIENT_ALIASES.get(name, name)
+
+
+def strip_leading_phrases(name):
+    # Keep removing a leading number or quantity/part phrase until none is left
+    while True:
+        before = name
+        name = LEADING_NUMBER.sub("", name)
+        for phrase in LEADING_PHRASES:
+            if name.startswith(phrase + " "):
+                name = name[len(phrase) + 1:]
+                break
+        if name == before:
+            return name
 
 
 def is_salt_or_pepper(name):
@@ -638,6 +668,14 @@ def only_variety_words(text):
 def has_food(name, available):
     # "cherry tomato" counts as "tomato", but "sundried tomato" and "potato" don't.
     # Works both ways: a user's "red bell pepper" covers a recipe's "bell pepper".
+    words = name.split()
+    # A part of a food is covered by the food: recipe "lemon juice" -> user "lemon"
+    if len(words) > 1 and words[-1] in PART_WORDS and has_food(" ".join(words[:-1]), available):
+        return True
+    # "grated parmesan" -> "parmesan", for the specific-food rule below
+    core = name
+    while core.split(" ", 1)[0] in PREP_WORDS and " " in core:
+        core = core.split(" ", 1)[1]
     for food in available:
         if (food, name) in NOT_THE_SAME:
             continue
@@ -648,8 +686,9 @@ def has_food(name, available):
         if food.endswith(" " + name) and only_variety_words(food[:-len(name)]):
             return True
         # A more specific food covers the general one: user "chicken breast" -> recipe "chicken"
-        if food.startswith(name + " ") and not set(food[len(name):].split()) & DIFFERENT_PRODUCT_WORDS:
-            return True
+        for general in {name, core}:
+            if food.startswith(general + " ") and not set(food[len(general):].split()) & DIFFERENT_PRODUCT_WORDS:
+                return True
     return False
 
 
