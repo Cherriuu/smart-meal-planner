@@ -94,6 +94,9 @@ PANTRY_STAPLES = {
     "vinegar", "soy sauce", "chicken broth", "vegetable broth",
     "ground cinnamon", "ground cumin", "dried oregano", "dried thyme", "bay", "nutmeg",
     "red pepper flake",
+    # The plain forms recipes use
+    "cinnamon", "cumin", "oregano", "thyme", "paprika", "garlic powder", "onion powder",
+    "chili powder", "italian seasoning", "granulated sugar", "dried basil",
 }
 # Words that can come before a food and still be that food ("cherry tomato" is a tomato,
 # "sundried tomato" isn't)
@@ -114,7 +117,11 @@ DIFFERENT_PRODUCT_WORDS = {
     "powder", "paste", "extract", "seasoning", "oil", "vinegar", "butter", "spread",
     "jam", "jelly", "syrup", "chocolate", "flour", "noodle", "pasta", "bread",
     "tortilla", "cracker", "chip", "cereal", "cake", "pudding",
+    "nugget", "jerky", "pie", "pepper",
 }
+# (user's food, recipe's food) pairs that are never the same food. "cheese" can't go in
+# DIFFERENT_PRODUCT_WORDS, since "parmesan cheese" must still cover "parmesan".
+NOT_THE_SAME = {("cream cheese", "cream")}
 # "... butter" counts as butter (a basic), except these: nut and seed butters,
 # apple butter, cocoa butter, shea butter
 NOT_BUTTER = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
@@ -623,6 +630,8 @@ def has_food(name, available):
     # "cherry tomato" counts as "tomato", but "sundried tomato" and "potato" don't.
     # Works both ways: a user's "red bell pepper" covers a recipe's "bell pepper".
     for food in available:
+        if (food, name) in NOT_THE_SAME:
+            continue
         if name == food:
             return True
         if name.endswith(" " + food) and only_variety_words(name[:-len(food)]):
@@ -636,29 +645,28 @@ def has_food(name, available):
 
 
 def foods_used(recipe, available):
-    # How many of the user's foods this recipe uses; each counts once, basics and pantry staples don't count
+    # How many of the user's foods this recipe uses; each counts once. Basics, pantry
+    # staples and spices don't count.
+    not_counted = SKIPPED_INGREDIENTS | PANTRY_STAPLES | SPICES
     names = [normalize_name(ingredient["name"]) for ingredient in recipe["ingredients"]]
-    names = [
-        name for name in names
-        if name not in SKIPPED_INGREDIENTS and name not in PANTRY_STAPLES and name not in NON_FOOD
-    ]
+    names = [name for name in names if name not in not_counted and name not in NON_FOOD]
     return sum(
         1 for food in available
-        if food not in SKIPPED_INGREDIENTS and food not in PANTRY_STAPLES
-        and any(has_food(name, {food}) for name in names)
+        if food not in not_counted and any(has_food(name, {food}) for name in names)
     )
 
 
 def missing_ingredients(recipe, available):
     # Display names of the foods this recipe needs that the user doesn't have.
-    # Basics (salt, oil, butter...), pantry staples (garlic, flour...), kitchen supplies and
-    # equipment listed as an ingredient don't count.
+    # Basics (salt, oil, butter...), pantry staples (garlic, flour...), spices, kitchen
+    # supplies and equipment listed as an ingredient don't count.
     missing = []
     for ingredient in recipe["ingredients"]:
         name = normalize_name(ingredient["name"])
         if (
             name in SKIPPED_INGREDIENTS
             or name in PANTRY_STAPLES
+            or name in SPICES
             or name in NON_FOOD
             or EQUIPMENT_WORDS.search(name)
         ):

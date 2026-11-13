@@ -37,6 +37,12 @@ SHOULD_MATCH = [
     "low fat milk",
 ]
 
+# (recipe ingredient, user foods) pairs that must match: a specific food covers the general one
+SHOULD_MATCH_PAIRS = [
+    ("parmesan", ["parmesan cheese"]),
+    ("chicken", ["chicken thigh"]),
+]
+
 # (recipe ingredient, user foods) pairs that must NOT match
 SHOULD_NOT_MATCH = [
     ("butter", ["peanut butter"]),
@@ -56,12 +62,20 @@ SHOULD_NOT_MATCH = [
     ("egg", ["cadbury eggs"]),
     ("chicken thigh", ["chicken breast"]),
     ("feta cheese", USER),
+    ("cream", ["cream cheese"]),
+    ("chicken", ["chicken nugget"]),
+    ("beef", ["beef jerky"]),
+    ("apple", ["apple pie"]),
+    ("lemon", ["lemon pepper"]),
 ]
 
 failures = []
 for ingredient in SHOULD_MATCH:
     if not covered(ingredient, USER):
         failures.append(f"should match but doesn't: {ingredient!r} for {USER}")
+for ingredient, foods in SHOULD_MATCH_PAIRS:
+    if not covered(ingredient, foods):
+        failures.append(f"should match but doesn't: {ingredient!r} for {foods}")
 for ingredient, foods in SHOULD_NOT_MATCH:
     if covered(ingredient, foods):
         failures.append(f"matches but shouldn't: {ingredient!r} for {foods}")
@@ -72,7 +86,13 @@ missing = missing_ingredients(recipe, {normalize_name(food) for food in USER})
 if missing != ["feta cheese", "sweet potato"]:
     failures.append(f"missing_ingredients gave {missing}, expected ['feta cheese', 'sweet potato']")
 
+# Spices and pantry staples are never "missing", even when the user didn't list them
+spiced = {"ingredients": [{"name": name} for name in ["cinnamon", "paprika", "garlic powder", "eggs"]]}
+missing = missing_ingredients(spiced, {normalize_name("egg")})
+if missing != []:
+    failures.append(f"spices reported missing: {missing}")
+
 for failure in failures:
     print("FAIL:", failure)
 assert not failures, f"{len(failures)} matching check(s) failed"
-print(f"All {len(SHOULD_MATCH) + len(SHOULD_NOT_MATCH) + 1} matching checks passed")
+print(f"All {len(SHOULD_MATCH) + len(SHOULD_MATCH_PAIRS) + len(SHOULD_NOT_MATCH) + 2} matching checks passed")
