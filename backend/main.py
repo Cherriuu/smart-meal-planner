@@ -17,10 +17,14 @@ load_dotenv()
 SPOONACULAR_API_KEY = os.getenv("SPOONACULAR_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
-# Stop when Spoonacular reports fewer points left than this (one search is ~3.2 points,
-# ~4.2 with a calorie/protein/sugar limit)
+# Stop when Spoonacular reports fewer points left than this (one search is ~4.3 points,
+# ~5.3 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
 GEMINI_MODEL = "gemini-3.6-flash"
+# Photo upload limits, checked before anything is sent to Gemini
+MAX_PHOTOS = 5
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
+DAILY_DETECT_LIMIT = int(os.getenv("DAILY_DETECT_LIMIT", "30"))
 # Spoonacular recipe types for each occasion; several types mean "any of these".
 # An empty list, or an occasion not listed here, searches all types.
 OCCASION_TYPES = {
@@ -30,6 +34,15 @@ OCCASION_TYPES = {
     "potluck": ["side dish", "appetizer"],
     "holiday": ["main course", "side dish", "dessert"],
 }
+# Spoonacular "occasions" that make a recipe a holiday pick; sorted first for "holiday"
+HOLIDAY_OCCASIONS = {
+    "thanksgiving", "christmas", "easter", "new year's eve", "hanukkah",
+    "4th of july", "fall", "winter",
+}
+# Words ignored when deciding if a name is just salt and/or pepper (a basic),
+# so "kosher salt and freshly ground black pepper" counts as a basic
+SALT_PEPPER_FILLER = {"and", "ground", "kosher", "fresh", "freshly", "cracked", "coarse", "fine"}
+SALT_PEPPER_WORDS = {"salt", "pepper", "black", "sea"}
 # Nutrition limits in grams per serving, sent to Spoonacular
 HIGH_PROTEIN_MIN = 20
 LOW_SUGAR_MAX = 10
@@ -111,6 +124,9 @@ search_count = 0
 search_date = None
 # Points left on the shared key, from Spoonacular's last response (None = unknown)
 quota_left = None
+# In-memory Gemini photo detection counter for the current UTC day
+detect_count = 0
+detect_date = None
 
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
@@ -118,7 +134,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -151,14 +167,46 @@ def daily_limit_response():
     )
 
 
+def daily_detect_limit_reached():
+    global detect_count, detect_date
+    today = datetime.now(timezone.utc).date()
+    if detect_date != today:
+        detect_date = today
+        detect_count = 0
+    return detect_count >= DAILY_DETECT_LIMIT
+
+
+def daily_detect_limit_response():
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "daily_detect_limit",
+            "message": "We've hit today's photo limit. Please try again tomorrow, or add your ingredients by hand.",
+        },
+    )
+
+
+def upload_error(error, message):
+    return JSONResponse(status_code=400, content={"error": error, "message": message})
+
+
+def photo_too_large(image):
+    # UploadFile.size is usually set; if not, measure the file and rewind it for Gemini
+    if image.size is not None:
+        return image.size > MAX_PHOTO_BYTES
+    too_large = len(image.file.read()) > MAX_PHOTO_BYTES
+    image.file.seek(0)
+    return too_large
+
+
 def search_spoonacular(request):
     global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe.
-    # Ask for 20 because our filters drop recipes that need foods the user doesn't have.
+    # Ask for 30 because our filters (missing foods, occasion, appliances) drop many.
     foods = [name for name in request.ingredients if normalize_name(name) not in SPICES]
     params = {
         "includeIngredients": ",".join(foods),
-        "number": 20,
+        "number": 30,
         "addRecipeInformation": True,
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
@@ -167,10 +215,7 @@ def search_spoonacular(request):
         "sort": "max-used-ingredients",
         "ignorePantry": True,
     }
-    # "Potluck " and "potluck" should match the same entry
-    recipe_types = OCCASION_TYPES.get(request.occasion.strip().lower(), [])
-    if recipe_types:
-        params["type"] = ",".join(recipe_types)
+    # No "type" param: the occasion is filtered by our own code (fits_request)
     if request.maxCalories is not None:
         params["maxCalories"] = request.maxCalories
     if request.highProtein:
@@ -234,6 +279,9 @@ def format_recipe(raw):
         "ingredients": ingredients,
         "steps": steps,
         "appliances": appliances,
+        # Used for the occasion filter and holiday sort
+        "dishTypes": [dish_type.lower() for dish_type in raw.get("dishTypes") or []],
+        "occasions": [occasion.lower() for occasion in raw.get("occasions") or []],
     }
 
 
@@ -325,7 +373,19 @@ def normalize_name(name):
         name = "butter"  # "unsalted butter" -> "butter", but not "peanut butter"
     if name.endswith(" oil") and not name[:-len(" oil")].endswith(NOT_OIL):
         name = "oil"  # "avocado oil" -> "oil", but not "sesame oil"
+    if is_salt_or_pepper(name):
+        name = "salt and pepper"  # a basic; "bell pepper" and "pepper jack" aren't
     return INGREDIENT_ALIASES.get(name, name)
+
+
+def is_salt_or_pepper(name):
+    # "kosher salt and ground pepper", "freshly ground black pepper", "salt to taste"
+    words = [word for word in name.replace("to taste", " ").split() if word not in SALT_PEPPER_FILLER]
+    return (
+        bool(words)
+        and all(word in SALT_PEPPER_WORDS for word in words)
+        and ("salt" in words or "pepper" in words)
+    )
 
 
 def clean_ingredients(names):
@@ -400,26 +460,61 @@ def needs_only_selected_appliances(recipe, selected):
     return True
 
 
+def fits_occasion(recipe, occasion):
+    recipe_types = OCCASION_TYPES.get(occasion.strip().lower(), [])
+    # Casual/unknown occasions, and sample recipes without dishTypes, aren't filtered
+    if not recipe_types or "dishTypes" not in recipe:
+        return True
+    return any(dish_type in recipe_types for dish_type in recipe["dishTypes"])
+
+
+def is_holiday_recipe(recipe):
+    return any(occasion in HOLIDAY_OCCASIONS for occasion in recipe.get("occasions", []))
+
+
+debug_dropped = {}  # DEBUG variety: why recipes were dropped in this request
+
+
 def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
+        debug_dropped["no steps"] = debug_dropped.get("no steps", 0) + 1  # DEBUG variety
         return False  # nothing to follow
+    if not fits_occasion(recipe, request.occasion):
+        debug_dropped["occasion"] = debug_dropped.get("occasion", 0) + 1  # DEBUG variety
+        return False
     selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
+        debug_dropped["appliances"] = debug_dropped.get("appliances", 0) + 1  # DEBUG variety
         return False
     available = {normalize_name(name) for name in request.ingredients}
     recipe["missingIngredients"] = missing_ingredients(recipe, available)
     if len(recipe["missingIngredients"]) > MAX_MISSING_INGREDIENTS:
+        debug_dropped["too many missing"] = debug_dropped.get("too many missing", 0) + 1  # DEBUG variety
         return False
     return True
 
 
 @app.post("/api/detect-ingredients")
 def detect_ingredients(images: list[UploadFile] = File(...)):
+    global detect_count
+    # Check uploads first, so bad ones never reach Gemini (and work without a key)
+    if len(images) > MAX_PHOTOS:
+        return upload_error("too_many_photos", "Please upload up to 5 photos.")
+    for image in images:
+        if not (image.content_type or "").startswith("image/"):
+            return upload_error("not_an_image", "Only image files can be uploaded.")
+    for image in images:
+        if photo_too_large(image):
+            return upload_error("photo_too_large", "Each photo must be under 5 MB.")
+
     # No key means local testing: use sample data instead of calling Gemini
     if not GEMINI_API_KEY:
         return load_sample("detect_ingredients.json")
+    if daily_detect_limit_reached():
+        return daily_detect_limit_response()
+    detect_count += 1
     return {"ingredients": clean_ingredients(detect_foods_with_gemini(images))}
 
 
@@ -445,12 +540,26 @@ def get_recipes(request: RecipeRequest):
                 return daily_limit_response()
             raise
         recipes = [format_recipe(raw) for raw in data["results"]]
+        if data["results"]:  # DEBUG variety
+            first = data["results"][0]  # DEBUG variety
+            print(f"[variety] first raw result {first.get('title')!r}: occasions={first.get('occasions')!r} dishTypes={first.get('dishTypes')!r}", flush=True)  # DEBUG variety
 
+    debug_dropped.clear()  # DEBUG variety
+    debug_before = len(recipes)  # DEBUG variety
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
-    # Fewest missing foods first, then the ones using most of the user's foods,
-    # then quickest; recipes without a time go last
+    debug_left = debug_before  # DEBUG variety
+    print(f"[variety] occasion={request.occasion!r}: {debug_before} recipes before filtering", flush=True)  # DEBUG variety
+    for debug_reason in ("no steps", "occasion", "appliances", "too many missing"):  # DEBUG variety
+        debug_left -= debug_dropped.get(debug_reason, 0)  # DEBUG variety
+        print(f"[variety]   after {debug_reason} filter: {debug_left} left (dropped {debug_dropped.get(debug_reason, 0)})", flush=True)  # DEBUG variety
+
+    # For "holiday", recipes tagged with a holiday come first. Then fewest missing
+    # foods, then the ones using most of the user's foods, then quickest;
+    # recipes without a time go last
+    holiday = request.occasion.strip().lower() == "holiday"
     available = {normalize_name(name) for name in request.ingredients}
     recipes.sort(key=lambda recipe: (
+        holiday and not is_holiday_recipe(recipe),
         len(recipe["missingIngredients"]),
         -foods_used(recipe, available),
         recipe["readyInMinutes"] is None,
