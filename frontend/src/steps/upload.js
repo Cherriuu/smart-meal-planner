@@ -1,7 +1,7 @@
 // Step 2: pick photos. Pressing Next sends them to the backend to find ingredients.
 import { addFiles, removeFile, getState, filesSignature, applyDetected } from '../state.js';
 import { detectIngredients } from '../api/client.js';
-import { escapeHtml, friendlyError } from '../util.js';
+import { escapeHtml, friendlyError, resizePhoto } from '../util.js';
 
 export function mountUpload(root) {
   const state = getState();
@@ -79,8 +79,10 @@ export function mountUpload(root) {
       // Same photos as last time: keep the list the user already reviewed.
       if (signature === state.detectedFor) return true;
       try {
-        const { ingredients, detections } = await detectIngredients(state.files);
-        applyDetected(ingredients, signature, detections ?? []);
+        // Send smaller, upright copies; Review shows these exact images under the boxes
+        const photos = await Promise.all(state.files.map((file) => resizePhoto(file)));
+        const { ingredients, detections } = await detectIngredients(photos);
+        applyDetected(ingredients, signature, detections ?? [], photos);
         return true;
       } catch (err) {
         error.textContent = friendlyError(err);

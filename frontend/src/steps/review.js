@@ -29,7 +29,9 @@ export function mountReview(root) {
   const addInput = root.querySelector('#new-ingredient');
   const addMessage = root.querySelector('#add-message');
   const error = root.querySelector('#review-error');
-  const photoUrls = state.detections.length ? state.files.map((file) => URL.createObjectURL(file)) : [];
+  // Draw boxes on the exact (resized, upright) images Gemini saw, so they line up
+  const shownPhotos = state.detectedPhotos.length ? state.detectedPhotos : state.files;
+  const photoUrls = state.detections.length ? shownPhotos.map((file) => URL.createObjectURL(file)) : [];
 
   // Each photo with a button over every detected food. Boxes are on a 0-1000 scale,
   // so dividing by 10 gives percentages that scale with the photo.
