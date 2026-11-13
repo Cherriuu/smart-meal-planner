@@ -27,3 +27,4 @@ dist-ssr
 # Python
 venv/
 __pycache__/
+backend/sample_data/spoonacular_capture.json
