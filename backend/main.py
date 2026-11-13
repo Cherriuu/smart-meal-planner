@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 import httpx
@@ -9,6 +10,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, Field
 
@@ -20,7 +22,17 @@ DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
 # Stop when Spoonacular reports fewer points left than this (one search is ~4.3 points,
 # ~5.3 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
+# Photo detection gives up quickly: ~15 s per attempt and at most 1 SDK retry,
+# then one try with SWAP_MODEL (Flash-Lite) if the main model is overloaded
+DETECT_TIMEOUT_MS = 15000
+DETECT_RETRY = {"attempts": 1}
+# Browsers allowed to call the API: any localhost port, plus the deployed frontend
+# URL(s) from ALLOWED_ORIGINS (comma-separated)
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/") for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
+]
+LOCAL_ORIGIN_REGEX = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
 # Smart swaps use the fast, cheap Flash-Lite model and their own daily limit
 SWAP_MODEL = "gemini-3.5-flash-lite"
 DAILY_SWAP_LIMIT = int(os.getenv("DAILY_SWAP_LIMIT", "100"))
@@ -138,9 +150,27 @@ SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
 app = FastAPI()
 
+
+# Any uncaught error becomes friendly JSON. This is middleware rather than an
+# exception handler, and it's added before CORSMiddleware so CORS wraps it:
+# that way the error response gets CORS headers and the frontend can read it
+# (instead of reporting "Can't reach the server").
+@app.middleware("http")
+async def catch_unexpected_errors(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": "server_error", "message": "Something went wrong. Please try again."},
+        )
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=LOCAL_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -197,6 +227,16 @@ def daily_detect_limit_response():
         content={
             "error": "daily_detect_limit",
             "message": "We've hit today's photo limit. Please try again tomorrow, or add your ingredients by hand.",
+        },
+    )
+
+
+def detect_unavailable_response():
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "detect_unavailable",
+            "message": "Our photo reader is busy right now. Try again in a minute, or add your ingredients by hand.",
         },
     )
 
@@ -383,26 +423,77 @@ def valid_swaps(swaps, recipe, user_foods):
 
 
 def detect_foods_with_gemini(images):
-    # Send all photos in one request; Gemini answers with a JSON list of food names
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    parts = [
-        types.Part.from_bytes(data=image.file.read(), mime_type=image.content_type)
-        for image in images
-    ]
+    # Send all photos in one request. Gemini answers with a JSON list of
+    # {"label", "photo", "box_2d"}; box_2d is [ymin, xmin, ymax, xmax] on a 0-1000 scale.
+    parts = []
+    for index, image in enumerate(images):
+        # Label each photo so Gemini can say which one a food is in
+        parts.append(f"Photo {index}:")
+        parts.append(types.Part.from_bytes(data=image.file.read(), mime_type=image.content_type))
     prompt = (
-        "List every food item you can see in these photos. "
-        "Use singular, lowercase, common names: 'egg' not 'eggs', "
+        "Detect every food item you can see in these photos. For each one, give its name, "
+        "the number of the photo it's in, and its box_2d as [ymin, xmin, ymax, xmax] "
+        "normalized to 0-1000. Use singular, lowercase, common names: 'egg' not 'eggs', "
         "'basil' not 'basil leaves', 'cheddar cheese' not 'Cheddar Cheese'."
     )
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=parts + [prompt],
-        config={
-            "response_mime_type": "application/json",
-            "response_json_schema": {"type": "array", "items": {"type": "string"}},
+    config = {
+        "response_mime_type": "application/json",
+        "response_json_schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "photo": {"type": "integer"},
+                    "box_2d": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["label", "photo", "box_2d"],
+            },
         },
-    )
-    return json.loads(response.text)
+    }
+    # The main model gets 1 SDK retry; the fallback is a last resort, so no retry there
+    attempts = [(GEMINI_MODEL, DETECT_RETRY), (SWAP_MODEL, None)]
+    for model, retry in attempts:
+        http_options = {"timeout": DETECT_TIMEOUT_MS}
+        if retry:
+            http_options["retry_options"] = retry
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
+        try:
+            response = client.models.generate_content(model=model, contents=parts + [prompt], config=config)
+        except Exception as error:
+            if model == SWAP_MODEL or not gemini_overloaded(error):
+                raise
+            print(f"[detect] {model} unavailable ({error!r}), trying {SWAP_MODEL}", flush=True)
+            continue
+        print(f"[detect] answered by {model}", flush=True)
+        return json.loads(response.text)
+
+
+def gemini_overloaded(error):
+    # 503 from Gemini, or the request timed out: worth one try with the fallback model
+    if isinstance(error, genai_errors.ServerError) and error.code == 503:
+        return True
+    return isinstance(error, (httpx.TimeoutException, TimeoutError)) or "Timeout" in type(error).__name__
+
+
+def clean_detections(raw_detections, photo_count):
+    # Keep food boxes only, with cleaned names, a real photo number and a box inside 0-1000
+    detections = []
+    for item in raw_detections:
+        try:
+            name = normalize_name(item["label"])
+            photo = int(item["photo"])
+            ymin, xmin, ymax, xmax = (min(max(float(value), 0), 1000) for value in item["box_2d"])
+        except (KeyError, TypeError, ValueError):
+            continue  # malformed item: skip it, keep the rest
+        if not name or name in SKIPPED_INGREDIENTS or name in NON_FOOD:
+            continue
+        if not 0 <= photo < photo_count:
+            continue
+        ymin, ymax = sorted((ymin, ymax))
+        xmin, xmax = sorted((xmin, xmax))
+        detections.append({"name": name, "photo": photo, "box": [ymin, xmin, ymax, xmax]})
+    return detections
 
 
 def singular(name):
@@ -572,11 +663,21 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
 
     # No key means local testing: use sample data instead of calling Gemini
     if not GEMINI_API_KEY:
-        return load_sample("detect_ingredients.json")
+        # No boxes for sample data, so the Review step shows just the list
+        return {**load_sample("detect_ingredients.json"), "detections": []}
     if daily_detect_limit_reached():
         return daily_detect_limit_response()
     detect_count += 1
-    return {"ingredients": clean_ingredients(detect_foods_with_gemini(images))}
+    try:
+        raw = detect_foods_with_gemini(images)
+        labels = [item["label"] for item in raw if isinstance(item, dict) and isinstance(item.get("label"), str)]
+        return {
+            "ingredients": clean_ingredients(labels),
+            "detections": clean_detections(raw, len(images)),
+        }
+    except Exception as error:  # 503, quota/429, timeout, bad JSON, anything else
+        print(f"[detect] photo detection failed: {error!r}", flush=True)
+        return detect_unavailable_response()
 
 
 @app.post("/api/recipes")
