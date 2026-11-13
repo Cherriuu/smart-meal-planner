@@ -36,6 +36,11 @@ LOCAL_ORIGIN_REGEX = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
 # Smart swaps use the fast, cheap Flash-Lite model and their own daily limit
 SWAP_MODEL = "gemini-3.5-flash-lite"
 DAILY_SWAP_LIMIT = int(os.getenv("DAILY_SWAP_LIMIT", "100"))
+# Testing recipe filters without spending Spoonacular quota:
+# SAVE_SPOONACULAR=1 saves each successful search's raw JSON to sample_data/spoonacular_capture.json,
+# USE_CAPTURE=1 replays that file instead of calling Spoonacular
+SAVE_SPOONACULAR = os.getenv("SAVE_SPOONACULAR") == "1"
+USE_CAPTURE = os.getenv("USE_CAPTURE") == "1"
 # Photo upload limits, checked before anything is sent to Gemini
 MAX_PHOTOS = 5
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
@@ -147,6 +152,7 @@ swap_count = 0
 swap_date = None
 
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
+CAPTURE_FILE = SAMPLE_DATA_DIR / "spoonacular_capture.json"
 
 app = FastAPI()
 
@@ -279,6 +285,7 @@ def search_spoonacular(request):
         params["maxSugar"] = LOW_SUGAR_MAX
     # Key goes in a header, not the URL, so it never shows up in error messages
     headers = {"x-api-key": SPOONACULAR_API_KEY}
+    print(f"[recipes] Spoonacular params (key is in a header, not here): {params}", flush=True)  # DEBUG recipes
     response = httpx.get(
         "https://api.spoonacular.com/recipes/complexSearch",
         params=params,
@@ -293,6 +300,10 @@ def search_spoonacular(request):
     except (KeyError, ValueError):
         pass  # header missing or not a number: keep the previous value
     response.raise_for_status()
+    if SAVE_SPOONACULAR:
+        CAPTURE_FILE.write_text(json.dumps(response.json(), indent=2))
+        print(f"[capture] saved this Spoonacular response to {CAPTURE_FILE}", flush=True)
+    print(f"[recipes] Spoonacular totalResults={response.json().get('totalResults')}, returned {len(response.json().get('results', []))} recipes", flush=True)  # DEBUG recipes
     return response.json()
 
 
@@ -645,19 +656,30 @@ def is_holiday_recipe(recipe):
 
 
 
+debug_dropped = {}  # DEBUG recipes: how many recipes each check dropped in this request
+
+
 def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
+        debug_dropped["no steps"] = debug_dropped.get("no steps", 0) + 1  # DEBUG recipes
+        print(f"[recipes]   dropped {recipe['title']!r}: no steps", flush=True)  # DEBUG recipes
         return False  # nothing to follow
     if not fits_occasion(recipe, request.occasion):
+        debug_dropped["occasion"] = debug_dropped.get("occasion", 0) + 1  # DEBUG recipes
+        print(f"[recipes]   dropped {recipe['title']!r}: occasion (dishTypes={recipe.get('dishTypes')})", flush=True)  # DEBUG recipes
         return False
     selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
+        debug_dropped["appliances"] = debug_dropped.get("appliances", 0) + 1  # DEBUG recipes
+        print(f"[recipes]   dropped {recipe['title']!r}: appliances (equipment={recipe['appliances']})", flush=True)  # DEBUG recipes
         return False
     available = {normalize_name(name) for name in request.ingredients}
     recipe["missingIngredients"] = missing_ingredients(recipe, available)
     if len(recipe["missingIngredients"]) > MAX_MISSING_INGREDIENTS:
+        debug_dropped["too many missing"] = debug_dropped.get("too many missing", 0) + 1  # DEBUG recipes
+        print(f"[recipes]   dropped {recipe['title']!r}: too many missing ({len(recipe['missingIngredients'])}): {recipe['missingIngredients']}", flush=True)  # DEBUG recipes
         return False
     return True
 
@@ -696,8 +718,15 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
 
 @app.post("/api/recipes")
 def get_recipes(request: RecipeRequest):
+    if USE_CAPTURE:
+        # Replay a saved Spoonacular response: no API call, no quota, not counted
+        if not CAPTURE_FILE.exists():
+            raise RuntimeError(f"USE_CAPTURE=1 but {CAPTURE_FILE} doesn't exist yet; run one search with SAVE_SPOONACULAR=1 first")
+        print(f"[capture] using saved Spoonacular response from {CAPTURE_FILE}", flush=True)
+        data = json.loads(CAPTURE_FILE.read_text())
+        recipes = [format_recipe(raw) for raw in data["results"]]
     # No key means local testing: use sample data and skip the daily limit
-    if not SPOONACULAR_API_KEY:
+    elif not SPOONACULAR_API_KEY:
         recipes = load_sample("recipes.json")["recipes"]
         # Spoonacular applies maxCalories for real searches; do it here for sample data
         if request.maxCalories is not None:
@@ -717,7 +746,13 @@ def get_recipes(request: RecipeRequest):
             raise
         recipes = [format_recipe(raw) for raw in data["results"]]
 
+    debug_dropped.clear()  # DEBUG recipes
+    debug_left = len(recipes)  # DEBUG recipes
+    print(f"[recipes] {debug_left} recipes before filtering (occasion={request.occasion!r}, appliances={request.appliances})", flush=True)  # DEBUG recipes
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
+    for debug_reason in ("no steps", "occasion", "appliances", "too many missing"):  # DEBUG recipes
+        debug_left -= debug_dropped.get(debug_reason, 0)  # DEBUG recipes
+        print(f"[recipes] after {debug_reason} check: {debug_left} left (dropped {debug_dropped.get(debug_reason, 0)})", flush=True)  # DEBUG recipes
 
     # For "holiday", recipes tagged with a holiday come first. Then fewest missing
     # foods, then the ones using most of the user's foods, then quickest;
@@ -732,6 +767,7 @@ def get_recipes(request: RecipeRequest):
         recipe["readyInMinutes"] or 0,
     ))
     recipes = recipes[:5]
+    print(f"[recipes] returning {len(recipes)}: {[recipe['title'] for recipe in recipes]}", flush=True)  # DEBUG recipes
 
     for recipe in recipes:
         # Swaps load separately from POST /api/swaps, so recipes never wait for Gemini
