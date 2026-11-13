@@ -11,6 +11,7 @@ const state = {
   files: [],          // photos the user picked
   detectedFor: null,  // which photos the ingredient list was last detected from
   ingredients: [],    // [{ name, checked, manual }] shown on the Review step
+  detections: [],     // [{ name, photo, box: [ymin, xmin, ymax, xmax] }] boxes on the photos (0-1000 scale)
   removed: new Set(), // names the user deleted, so a re-detect doesn't bring them back
   recipes: null,      // last recipe results
   recipesFor: null,   // the request those results belong to
@@ -55,7 +56,9 @@ export function normalizeName(name) {
 // Called after photos are analysed. Keeps what the user already did:
 // items they unchecked stay unchecked, items they deleted stay gone,
 // and items they typed in stay on the list.
-export function applyDetected(names, signature) {
+export function applyDetected(names, signature, detections = []) {
+  // Boxes are looked up by name, so clean names the same way as the list
+  state.detections = detections.map((item) => ({ ...item, name: normalizeName(item.name) }));
   const previous = new Map(state.ingredients.map((item) => [item.name, item]));
   const detected = [];
   for (const raw of names) {

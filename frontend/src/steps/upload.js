@@ -79,8 +79,8 @@ export function mountUpload(root) {
       // Same photos as last time: keep the list the user already reviewed.
       if (signature === state.detectedFor) return true;
       try {
-        const { ingredients } = await detectIngredients(state.files);
-        applyDetected(ingredients, signature);
+        const { ingredients, detections } = await detectIngredients(state.files);
+        applyDetected(ingredients, signature, detections ?? []);
         return true;
       } catch (err) {
         error.textContent = friendlyError(err);
