@@ -83,6 +83,18 @@ NON_FOOD = {
     "paper towel", "aluminum foil", "parchment paper", "plastic wrap",
     "wax paper", "toothpick", "kitchen twine",
 }
+# Pantry staples most kitchens have (Spoonacular gets ignorePantry=True too). Like basics,
+# they're never "missing" and don't count as used, but they stay in photo detection results.
+# Spelled the way normalize_name returns them ("bay leaf" -> "bay").
+PANTRY_STAPLES = {
+    "garlic", "garlic clove",
+    "sugar", "brown sugar", "powdered sugar",
+    "flour", "all purpose flour", "all-purpose flour",
+    "baking powder", "baking soda", "vanilla extract", "cornstarch", "honey",
+    "vinegar", "soy sauce", "chicken broth", "vegetable broth",
+    "ground cinnamon", "ground cumin", "dried oregano", "dried thyme", "bay", "nutmeg",
+    "red pepper flake",
+}
 # Words that can come before a food and still be that food ("cherry tomato" is a tomato,
 # "sundried tomato" isn't)
 VARIETY_WORDS = {
@@ -608,22 +620,32 @@ def has_food(name, available):
 
 
 def foods_used(recipe, available):
-    # How many of the user's foods this recipe uses; each counts once, basics don't count
+    # How many of the user's foods this recipe uses; each counts once, basics and pantry staples don't count
     names = [normalize_name(ingredient["name"]) for ingredient in recipe["ingredients"]]
-    names = [name for name in names if name not in SKIPPED_INGREDIENTS and name not in NON_FOOD]
+    names = [
+        name for name in names
+        if name not in SKIPPED_INGREDIENTS and name not in PANTRY_STAPLES and name not in NON_FOOD
+    ]
     return sum(
         1 for food in available
-        if food not in SKIPPED_INGREDIENTS and any(has_food(name, {food}) for name in names)
+        if food not in SKIPPED_INGREDIENTS and food not in PANTRY_STAPLES
+        and any(has_food(name, {food}) for name in names)
     )
 
 
 def missing_ingredients(recipe, available):
     # Display names of the foods this recipe needs that the user doesn't have.
-    # Basics (salt, oil, butter...), kitchen supplies and equipment listed as an ingredient don't count.
+    # Basics (salt, oil, butter...), pantry staples (garlic, flour...), kitchen supplies and
+    # equipment listed as an ingredient don't count.
     missing = []
     for ingredient in recipe["ingredients"]:
         name = normalize_name(ingredient["name"])
-        if name in SKIPPED_INGREDIENTS or name in NON_FOOD or EQUIPMENT_WORDS.search(name):
+        if (
+            name in SKIPPED_INGREDIENTS
+            or name in PANTRY_STAPLES
+            or name in NON_FOOD
+            or EQUIPMENT_WORDS.search(name)
+        ):
             continue
         if not has_food(name, available) and ingredient["name"] not in missing:
             missing.append(ingredient["name"])
