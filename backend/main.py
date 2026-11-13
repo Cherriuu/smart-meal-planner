@@ -61,6 +61,14 @@ VARIETY_WORDS = {
 NOT_BUTTER = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
               "pistachio", "macadamia", "sunflower seed", "nut",
               "apple", "cocoa", "shea")
+# "... oil" counts as oil (a basic), except these flavoring oils
+NOT_OIL = ("sesame", "truffle", "chili")
+# Spices count as foods the user has, but aren't sent to Spoonacular's
+# includeIngredients, so they don't steer which recipes come back
+SPICES = {
+    "paprika", "garlic powder", "onion powder", "cumin", "chili powder",
+    "oregano", "basil", "thyme", "cinnamon", "red pepper flake", "italian seasoning",
+}
 # Different names for the same food, mapped to the name Spoonacular uses
 INGREDIENT_ALIASES = {
     "scallion": "green onion",
@@ -147,14 +155,17 @@ def search_spoonacular(request):
     global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe.
     # Ask for 20 because our filters drop recipes that need foods the user doesn't have.
+    foods = [name for name in request.ingredients if normalize_name(name) not in SPICES]
     params = {
-        "includeIngredients": ",".join(request.ingredients),
+        "includeIngredients": ",".join(foods),
         "number": 20,
         "addRecipeInformation": True,
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
         "fillIngredients": True,
-        "sort": "min-missing-ingredients",
+        # Our own filter handles missing foods, so rank by how many of the user's foods are used
+        "sort": "max-used-ingredients",
+        "ignorePantry": True,
     }
     # "Potluck " and "potluck" should match the same entry
     recipe_types = OCCASION_TYPES.get(request.occasion.strip().lower(), [])
@@ -312,6 +323,8 @@ def normalize_name(name):
         name = name[:-len(" leaf")]  # "spinach leaf" -> "spinach"
     if name.endswith(" butter") and not name[:-len(" butter")].endswith(NOT_BUTTER):
         name = "butter"  # "unsalted butter" -> "butter", but not "peanut butter"
+    if name.endswith(" oil") and not name[:-len(" oil")].endswith(NOT_OIL):
+        name = "oil"  # "avocado oil" -> "oil", but not "sesame oil"
     return INGREDIENT_ALIASES.get(name, name)
 
 
