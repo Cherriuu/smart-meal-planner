@@ -101,6 +101,19 @@ VARIETY_WORDS = {
     "cherry", "roma", "grape", "plum", "corn", "flour", "whole wheat",
     "mild", "sharp", "extra sharp", "baby", "red", "white", "yellow", "green",
     "large", "medium", "small", "fresh", "organic",
+    # Prep and descriptor words: "shredded cheddar cheese" is still cheddar cheese
+    "shredded", "grated", "diced", "chopped", "minced", "sliced", "cooked",
+    "lean", "extra lean", "boneless", "skinless", "whole", "long grain",
+    "jasmine", "basmati", "low fat", "reduced fat", "canned", "frozen",
+}
+# A user's "chicken breast" covers a recipe's "chicken" (the recipe names the first word(s)),
+# unless the user's extra words make it a different product: "chicken broth" isn't chicken,
+# "peanut butter" isn't peanuts, "egg noodle" isn't egg
+DIFFERENT_PRODUCT_WORDS = {
+    "broth", "stock", "bouillon", "soup", "sauce", "gravy", "dressing", "juice", "milk",
+    "powder", "paste", "extract", "seasoning", "oil", "vinegar", "butter", "spread",
+    "jam", "jelly", "syrup", "chocolate", "flour", "noodle", "pasta", "bread",
+    "tortilla", "cracker", "chip", "cereal", "cake", "pudding",
 }
 # "... butter" counts as butter (a basic), except these: nut and seed butters,
 # apple butter, cocoa butter, shea butter
@@ -615,6 +628,9 @@ def has_food(name, available):
         if name.endswith(" " + food) and only_variety_words(name[:-len(food)]):
             return True
         if food.endswith(" " + name) and only_variety_words(food[:-len(name)]):
+            return True
+        # A more specific food covers the general one: user "chicken breast" -> recipe "chicken"
+        if food.startswith(name + " ") and not set(food[len(name):].split()) & DIFFERENT_PRODUCT_WORDS:
             return True
     return False
 
