@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -19,9 +20,11 @@ load_dotenv()
 SPOONACULAR_API_KEY = os.getenv("SPOONACULAR_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
-# Stop when Spoonacular reports fewer points left than this (one search is ~4.3 points,
-# ~5.3 with a calorie/protein/sugar limit)
+# Stop when Spoonacular reports fewer points left than this (one search is ~3.2 points,
+# ~4.2 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
+# How many different searches to remember in memory (oldest is forgotten first)
+SEARCH_CACHE_SIZE = 100
 GEMINI_MODEL = "gemini-3.8-flash"
 # Photo detection gives up quickly: ~15 s per attempt and at most 1 SDK retry,
 # then one try with SWAP_MODEL (Flash-Lite) if the main model is overloaded
@@ -177,6 +180,9 @@ search_count = 0
 search_date = None
 # Points left on the shared key, from Spoonacular's last response (None = unknown)
 quota_left = None
+# Formatted Spoonacular results for searches already made, so repeating a search (or only
+# changing servings or appliances) costs no points. Cleared when the server restarts.
+search_cache = {}
 # In-memory Gemini photo detection counter for the current UTC day
 detect_count = 0
 detect_date = None
@@ -296,11 +302,11 @@ def photo_too_large(image):
 def search_spoonacular(request):
     global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe.
-    # Ask for 30 because our filters (missing foods, occasion, appliances) drop many.
+    # Ask for 20 because our filters (missing foods, occasion, appliances) drop some.
     foods = [name for name in request.ingredients if normalize_name(name) not in SPICES]
     params = {
         "includeIngredients": ",".join(foods),
-        "number": 30,
+        "number": 20,
         "addRecipeInformation": True,
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
@@ -753,6 +759,18 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
         return detect_unavailable_response()
 
 
+def search_cache_key(request):
+    # Everything that changes what Spoonacular returns. Servings and appliances aren't
+    # here: they're applied afterwards to the same results.
+    return (
+        tuple(sorted({normalize_name(name) for name in request.ingredients})),
+        request.occasion.strip().lower(),
+        request.maxCalories,
+        request.highProtein,
+        request.lowSugar,
+    )
+
+
 @app.post("/api/recipes")
 def get_recipes(request: RecipeRequest):
     if USE_CAPTURE:
@@ -772,16 +790,22 @@ def get_recipes(request: RecipeRequest):
                 if recipe["calories"] is None or recipe["calories"] <= request.maxCalories
             ]
     else:
-        if daily_limit_reached():
-            return daily_limit_response()
-        try:
-            data = search_spoonacular(request)
-        except httpx.HTTPStatusError as error:
-            # 402 means Spoonacular says our daily points are used up
-            if error.response.status_code == 402:
+        key = search_cache_key(request)
+        if key not in search_cache:
+            if daily_limit_reached():
                 return daily_limit_response()
-            raise
-        recipes = [format_recipe(raw) for raw in data["results"]]
+            try:
+                data = search_spoonacular(request)
+            except httpx.HTTPStatusError as error:
+                # 402 means Spoonacular says our daily points are used up
+                if error.response.status_code == 402:
+                    return daily_limit_response()
+                raise
+            if len(search_cache) >= SEARCH_CACHE_SIZE:
+                search_cache.pop(next(iter(search_cache)))  # forget the oldest search
+            search_cache[key] = [format_recipe(raw) for raw in data["results"]]
+        # A fresh copy each time: filtering, scaling and swaps change the recipes in place
+        recipes = copy.deepcopy(search_cache[key])
 
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
 
