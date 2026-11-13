@@ -309,7 +309,12 @@ def search_spoonacular(request):
         "sort": "max-used-ingredients",
         "ignorePantry": True,
     }
-    # No "type" param: the occasion is filtered by our own code (fits_request)
+    # Send all of the occasion's meal types ("Potluck" -> "side dish,appetizer"). The docs only
+    # show one value, but a real test returned recipes matching any of them (OR).
+    # fits_occasion re-checks the types locally as a safety net. Casual (no types) sends none.
+    recipe_types = OCCASION_TYPES.get(request.occasion.strip().lower(), [])
+    if recipe_types:
+        params["type"] = ",".join(recipe_types)
     if request.maxCalories is not None:
         params["maxCalories"] = request.maxCalories
     if request.highProtein:
@@ -318,7 +323,6 @@ def search_spoonacular(request):
         params["maxSugar"] = LOW_SUGAR_MAX
     # Key goes in a header, not the URL, so it never shows up in error messages
     headers = {"x-api-key": SPOONACULAR_API_KEY}
-    print(f"[recipes] Spoonacular params (key is in a header, not here): {params}", flush=True)  # DEBUG recipes
     response = httpx.get(
         "https://api.spoonacular.com/recipes/complexSearch",
         params=params,
@@ -336,7 +340,6 @@ def search_spoonacular(request):
     if SAVE_SPOONACULAR:
         CAPTURE_FILE.write_text(json.dumps(response.json(), indent=2))
         print(f"[capture] saved this Spoonacular response to {CAPTURE_FILE}", flush=True)
-    print(f"[recipes] Spoonacular totalResults={response.json().get('totalResults')}, returned {len(response.json().get('results', []))} recipes", flush=True)  # DEBUG recipes
     return response.json()
 
 
@@ -701,32 +704,19 @@ def is_holiday_recipe(recipe):
     return any(occasion in HOLIDAY_OCCASIONS for occasion in recipe.get("occasions", []))
 
 
-
-
-debug_dropped = {}  # DEBUG recipes: how many recipes each check dropped in this request
-
-
 def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
-        debug_dropped["no steps"] = debug_dropped.get("no steps", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: no steps", flush=True)  # DEBUG recipes
         return False  # nothing to follow
     if not fits_occasion(recipe, request.occasion):
-        debug_dropped["occasion"] = debug_dropped.get("occasion", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: occasion (dishTypes={recipe.get('dishTypes')})", flush=True)  # DEBUG recipes
         return False
     selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
-        debug_dropped["appliances"] = debug_dropped.get("appliances", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: appliances (equipment={recipe['appliances']})", flush=True)  # DEBUG recipes
         return False
     available = {normalize_name(name) for name in request.ingredients}
     recipe["missingIngredients"] = missing_ingredients(recipe, available)
     if len(recipe["missingIngredients"]) > MAX_MISSING_INGREDIENTS:
-        debug_dropped["too many missing"] = debug_dropped.get("too many missing", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: too many missing ({len(recipe['missingIngredients'])}): {recipe['missingIngredients']}", flush=True)  # DEBUG recipes
         return False
     return True
 
@@ -793,13 +783,7 @@ def get_recipes(request: RecipeRequest):
             raise
         recipes = [format_recipe(raw) for raw in data["results"]]
 
-    debug_dropped.clear()  # DEBUG recipes
-    debug_left = len(recipes)  # DEBUG recipes
-    print(f"[recipes] {debug_left} recipes before filtering (occasion={request.occasion!r}, appliances={request.appliances})", flush=True)  # DEBUG recipes
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
-    for debug_reason in ("no steps", "occasion", "appliances", "too many missing"):  # DEBUG recipes
-        debug_left -= debug_dropped.get(debug_reason, 0)  # DEBUG recipes
-        print(f"[recipes] after {debug_reason} check: {debug_left} left (dropped {debug_dropped.get(debug_reason, 0)})", flush=True)  # DEBUG recipes
 
     # For "holiday", recipes tagged with a holiday come first. Then fewest missing
     # foods, then the ones using most of the user's foods, then quickest;
@@ -814,7 +798,6 @@ def get_recipes(request: RecipeRequest):
         recipe["readyInMinutes"] or 0,
     ))
     recipes = recipes[:5]
-    print(f"[recipes] returning {len(recipes)}: {[recipe['title'] for recipe in recipes]}", flush=True)  # DEBUG recipes
 
     for recipe in recipes:
         # Swaps load separately from POST /api/swaps, so recipes never wait for Gemini
