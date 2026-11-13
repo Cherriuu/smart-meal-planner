@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 import httpx
@@ -9,6 +10,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, Field
 
@@ -17,10 +19,27 @@ load_dotenv()
 SPOONACULAR_API_KEY = os.getenv("SPOONACULAR_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
-# Stop when Spoonacular reports fewer points left than this (one search is ~3.2 points,
-# ~4.2 with a calorie/protein/sugar limit)
+# Stop when Spoonacular reports fewer points left than this (one search is ~4.3 points,
+# ~5.3 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
+# Photo detection gives up quickly: ~15 s per attempt and at most 1 SDK retry,
+# then one try with SWAP_MODEL (Flash-Lite) if the main model is overloaded
+DETECT_TIMEOUT_MS = 15000
+DETECT_RETRY = {"attempts": 1}
+# Browsers allowed to call the API: any localhost port, plus the deployed frontend
+# URL(s) from ALLOWED_ORIGINS (comma-separated)
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/") for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()
+]
+LOCAL_ORIGIN_REGEX = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+# Smart swaps use the fast, cheap Flash-Lite model and their own daily limit
+SWAP_MODEL = "gemini-3.5-flash-lite"
+DAILY_SWAP_LIMIT = int(os.getenv("DAILY_SWAP_LIMIT", "100"))
+# Photo upload limits, checked before anything is sent to Gemini
+MAX_PHOTOS = 5
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
+DAILY_DETECT_LIMIT = int(os.getenv("DAILY_DETECT_LIMIT", "30"))
 # Spoonacular recipe types for each occasion; several types mean "any of these".
 # An empty list, or an occasion not listed here, searches all types.
 OCCASION_TYPES = {
@@ -30,6 +49,15 @@ OCCASION_TYPES = {
     "potluck": ["side dish", "appetizer"],
     "holiday": ["main course", "side dish", "dessert"],
 }
+# Spoonacular "occasions" that make a recipe a holiday pick; sorted first for "holiday"
+HOLIDAY_OCCASIONS = {
+    "thanksgiving", "christmas", "easter", "new year's eve", "hanukkah",
+    "4th of july", "fall", "winter",
+}
+# Words ignored when deciding if a name is just salt and/or pepper (a basic),
+# so "kosher salt and freshly ground black pepper" counts as a basic
+SALT_PEPPER_FILLER = {"and", "ground", "kosher", "fresh", "freshly", "cracked", "coarse", "fine"}
+SALT_PEPPER_WORDS = {"salt", "pepper", "black", "sea"}
 # Nutrition limits in grams per serving, sent to Spoonacular
 HIGH_PROTEIN_MIN = 20
 LOW_SUGAR_MAX = 10
@@ -111,14 +139,38 @@ search_count = 0
 search_date = None
 # Points left on the shared key, from Spoonacular's last response (None = unknown)
 quota_left = None
+# In-memory Gemini photo detection counter for the current UTC day
+detect_count = 0
+detect_date = None
+# In-memory Gemini smart swap counter for the current UTC day
+swap_count = 0
+swap_date = None
 
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
 app = FastAPI()
 
+
+# Any uncaught error becomes friendly JSON. This is middleware rather than an
+# exception handler, and it's added before CORSMiddleware so CORS wraps it:
+# that way the error response gets CORS headers and the frontend can read it
+# (instead of reporting "Can't reach the server").
+@app.middleware("http")
+async def catch_unexpected_errors(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": "server_error", "message": "Something went wrong. Please try again."},
+        )
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=LOCAL_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -151,14 +203,65 @@ def daily_limit_response():
     )
 
 
+def daily_detect_limit_reached():
+    global detect_count, detect_date
+    today = datetime.now(timezone.utc).date()
+    if detect_date != today:
+        detect_date = today
+        detect_count = 0
+    return detect_count >= DAILY_DETECT_LIMIT
+
+
+def daily_swap_limit_reached():
+    global swap_count, swap_date
+    today = datetime.now(timezone.utc).date()
+    if swap_date != today:
+        swap_date = today
+        swap_count = 0
+    return swap_count >= DAILY_SWAP_LIMIT
+
+
+def daily_detect_limit_response():
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "daily_detect_limit",
+            "message": "We've hit today's photo limit. Please try again tomorrow, or add your ingredients by hand.",
+        },
+    )
+
+
+def detect_unavailable_response():
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "detect_unavailable",
+            "message": "Our photo reader is busy right now. Try again in a minute, or add your ingredients by hand.",
+        },
+    )
+
+
+def upload_error(error, message):
+    return JSONResponse(status_code=400, content={"error": error, "message": message})
+
+
+def photo_too_large(image):
+    # UploadFile.size is usually set; if not, measure the file and rewind it for Gemini
+    if image.size is not None:
+        return image.size > MAX_PHOTO_BYTES
+    too_large = len(image.file.read()) > MAX_PHOTO_BYTES
+    image.file.seek(0)
+    return too_large
+
+
 def search_spoonacular(request):
     global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe.
-    # Ask for 20 because our filters drop recipes that need foods the user doesn't have.
+    # Ask for 30 because our filters (missing foods, occasion, appliances) drop many.
     foods = [name for name in request.ingredients if normalize_name(name) not in SPICES]
     params = {
         "includeIngredients": ",".join(foods),
-        "number": 20,
+        "number": 30,
         "addRecipeInformation": True,
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
@@ -167,10 +270,7 @@ def search_spoonacular(request):
         "sort": "max-used-ingredients",
         "ignorePantry": True,
     }
-    # "Potluck " and "potluck" should match the same entry
-    recipe_types = OCCASION_TYPES.get(request.occasion.strip().lower(), [])
-    if recipe_types:
-        params["type"] = ",".join(recipe_types)
+    # No "type" param: the occasion is filtered by our own code (fits_request)
     if request.maxCalories is not None:
         params["maxCalories"] = request.maxCalories
     if request.highProtein:
@@ -234,6 +334,9 @@ def format_recipe(raw):
         "ingredients": ingredients,
         "steps": steps,
         "appliances": appliances,
+        # Used for the occasion filter and holiday sort
+        "dishTypes": [dish_type.lower() for dish_type in raw.get("dishTypes") or []],
+        "occasions": [occasion.lower() for occasion in raw.get("occasions") or []],
     }
 
 
@@ -268,27 +371,136 @@ def health():
     }
 
 
-def detect_foods_with_gemini(images):
-    # Send all photos in one request; Gemini answers with a JSON list of food names
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    parts = [
-        types.Part.from_bytes(data=image.file.read(), mime_type=image.content_type)
-        for image in images
-    ]
+def suggest_swaps_with_gemini(recipes, user_foods):
+    # One request for all recipes; returns {recipe id: {missing ingredient: suggested food}}
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 8000})
+    payload = {
+        "userFoods": user_foods,
+        "recipes": [
+            {"id": recipe["id"], "title": recipe["title"], "missingIngredients": recipe["missingIngredients"]}
+            for recipe in recipes if recipe["missingIngredients"]
+        ],
+    }
     prompt = (
-        "List every food item you can see in these photos. "
-        "Use singular, lowercase, common names: 'egg' not 'eggs', "
-        "'basil' not 'basil leaves', 'cheddar cheese' not 'Cheddar Cheese'."
+        "For each recipe below, and each of its missing ingredients, suggest one food from "
+        "userFoods that could replace it in that recipe. Use the food's name exactly as written "
+        "in userFoods, or an empty string if nothing reasonable works.\n" + json.dumps(payload)
     )
     response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=parts + [prompt],
+        model=SWAP_MODEL,
+        contents=[prompt],
         config={
             "response_mime_type": "application/json",
-            "response_json_schema": {"type": "array", "items": {"type": "string"}},
+            "response_json_schema": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "recipeId": {"type": "integer"},
+                        "missing": {"type": "string"},
+                        "swap": {"type": "string"},
+                    },
+                    "required": ["recipeId", "missing", "swap"],
+                },
+            },
         },
     )
-    return json.loads(response.text)
+    swaps = {}
+    for item in json.loads(response.text):
+        if item.get("swap"):
+            swaps.setdefault(item["recipeId"], {})[item["missing"]] = item["swap"]
+    return swaps
+
+
+def valid_swaps(swaps, recipe, user_foods):
+    # Keep a swap only for a real missing ingredient, pointing at one of the user's own foods
+    by_name = {normalize_name(food): food for food in user_foods}
+    return {
+        missing: by_name[normalize_name(swap)]
+        for missing, swap in swaps.items()
+        if missing in recipe["missingIngredients"] and isinstance(swap, str) and normalize_name(swap) in by_name
+    }
+
+
+def detect_foods_with_gemini(images):
+    # Send all photos in one request. Gemini answers with a JSON list of
+    # {"label", "photo", "box_2d"}; box_2d is [ymin, xmin, ymax, xmax] on a 0-1000 scale.
+    parts = []
+    for index, image in enumerate(images):
+        # Label each photo so Gemini can say which one a food is in
+        parts.append(f"Photo {index}:")
+        parts.append(types.Part.from_bytes(data=image.file.read(), mime_type=image.content_type))
+    prompt = (
+        "Detect every food item you can see in these photos. For each one, give its name, "
+        "the number of the photo it's in, and its box_2d as [ymin, xmin, ymax, xmax] "
+        "normalized to 0-1000. Use singular, lowercase, common names: 'egg' not 'eggs', "
+        "'basil' not 'basil leaves', 'cheddar cheese' not 'Cheddar Cheese'."
+    )
+    config = {
+        "response_mime_type": "application/json",
+        "response_json_schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "photo": {"type": "integer"},
+                    "box_2d": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["label", "photo", "box_2d"],
+            },
+        },
+    }
+    # The main model uses DETECT_RETRY; the fallback is a last resort, so no retry there.
+    # Listing foods and boxes needs no reasoning, so each model gets its lowest thinking
+    # level: 3.8 Flash's lowest is "low" ("minimal" is an error there); Flash-Lite has "minimal".
+    attempts = [(GEMINI_MODEL, DETECT_RETRY, "low"), (SWAP_MODEL, None, "minimal")]
+    for model, retry, thinking_level in attempts:
+        http_options = {"timeout": DETECT_TIMEOUT_MS}
+        if retry:
+            http_options["retry_options"] = retry
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=parts + [prompt],
+                config={**config, "thinking_config": {"thinking_level": thinking_level}},
+            )
+        except Exception as error:
+            if model == SWAP_MODEL or not gemini_overloaded(error):
+                raise
+            print(f"[detect] {model} unavailable ({error!r}), trying {SWAP_MODEL}", flush=True)
+            continue
+        print(f"[detect] answered by {model}", flush=True)
+        return json.loads(response.text)
+
+
+def gemini_overloaded(error):
+    # 503 (overloaded), 504 / DEADLINE_EXCEEDED, or our own timeout: worth one try
+    # with the fallback model
+    if isinstance(error, genai_errors.ServerError) and error.code in (503, 504):
+        return True
+    return isinstance(error, (httpx.TimeoutException, TimeoutError)) or "Timeout" in type(error).__name__
+
+
+def clean_detections(raw_detections, photo_count):
+    # Keep food boxes only, with cleaned names, a real photo number and a box inside 0-1000
+    detections = []
+    for item in raw_detections:
+        try:
+            name = normalize_name(item["label"])
+            photo = int(item["photo"])
+            ymin, xmin, ymax, xmax = (min(max(float(value), 0), 1000) for value in item["box_2d"])
+        except (KeyError, TypeError, ValueError):
+            continue  # malformed item: skip it, keep the rest
+        if not name or name in SKIPPED_INGREDIENTS or name in NON_FOOD or EQUIPMENT_WORDS.search(name):
+            continue
+        if not 0 <= photo < photo_count:
+            continue
+        ymin, ymax = sorted((ymin, ymax))
+        xmin, xmax = sorted((xmin, xmax))
+        detections.append({"name": name, "photo": photo, "box": [ymin, xmin, ymax, xmax]})
+    return detections
 
 
 def singular(name):
@@ -325,14 +537,33 @@ def normalize_name(name):
         name = "butter"  # "unsalted butter" -> "butter", but not "peanut butter"
     if name.endswith(" oil") and not name[:-len(" oil")].endswith(NOT_OIL):
         name = "oil"  # "avocado oil" -> "oil", but not "sesame oil"
+    if is_salt_or_pepper(name):
+        name = "salt and pepper"  # a basic; "bell pepper" and "pepper jack" aren't
     return INGREDIENT_ALIASES.get(name, name)
 
 
+def is_salt_or_pepper(name):
+    # "kosher salt and ground pepper", "freshly ground black pepper", "salt to taste"
+    words = [word for word in name.replace("to taste", " ").split() if word not in SALT_PEPPER_FILLER]
+    return (
+        bool(words)
+        and all(word in SALT_PEPPER_WORDS for word in words)
+        and ("salt" in words or "pepper" in words)
+    )
+
+
 def clean_ingredients(names):
+    # The detected food list: no basics, kitchen supplies or equipment ("skillet"), no repeats
     cleaned = []
     for name in names:
         name = normalize_name(name)
-        if name and name not in SKIPPED_INGREDIENTS and name not in cleaned:
+        if (
+            name
+            and name not in SKIPPED_INGREDIENTS
+            and name not in NON_FOOD
+            and not EQUIPMENT_WORDS.search(name)
+            and name not in cleaned
+        ):
             cleaned.append(name)
     return cleaned
 
@@ -400,10 +631,26 @@ def needs_only_selected_appliances(recipe, selected):
     return True
 
 
+def fits_occasion(recipe, occasion):
+    recipe_types = OCCASION_TYPES.get(occasion.strip().lower(), [])
+    # Casual/unknown occasions, and sample recipes without dishTypes, aren't filtered
+    if not recipe_types or "dishTypes" not in recipe:
+        return True
+    return any(dish_type in recipe_types for dish_type in recipe["dishTypes"])
+
+
+def is_holiday_recipe(recipe):
+    return any(occasion in HOLIDAY_OCCASIONS for occasion in recipe.get("occasions", []))
+
+
+
+
 def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
         return False  # nothing to follow
+    if not fits_occasion(recipe, request.occasion):
+        return False
     selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
@@ -417,10 +664,34 @@ def fits_request(recipe, request):
 
 @app.post("/api/detect-ingredients")
 def detect_ingredients(images: list[UploadFile] = File(...)):
+    global detect_count
+    # Check uploads first, so bad ones never reach Gemini (and work without a key)
+    if len(images) > MAX_PHOTOS:
+        return upload_error("too_many_photos", "Please upload up to 5 photos.")
+    for image in images:
+        if not (image.content_type or "").startswith("image/"):
+            return upload_error("not_an_image", "Only image files can be uploaded.")
+    for image in images:
+        if photo_too_large(image):
+            return upload_error("photo_too_large", "Each photo must be under 5 MB.")
+
     # No key means local testing: use sample data instead of calling Gemini
     if not GEMINI_API_KEY:
-        return load_sample("detect_ingredients.json")
-    return {"ingredients": clean_ingredients(detect_foods_with_gemini(images))}
+        # No boxes for sample data, so the Review step shows just the list
+        return {**load_sample("detect_ingredients.json"), "detections": []}
+    if daily_detect_limit_reached():
+        return daily_detect_limit_response()
+    detect_count += 1
+    try:
+        raw = detect_foods_with_gemini(images)
+        labels = [item["label"] for item in raw if isinstance(item, dict) and isinstance(item.get("label"), str)]
+        return {
+            "ingredients": clean_ingredients(labels),
+            "detections": clean_detections(raw, len(images)),
+        }
+    except Exception as error:  # 503, quota/429, timeout, bad JSON, anything else
+        print(f"[detect] photo detection failed: {error!r}", flush=True)
+        return detect_unavailable_response()
 
 
 @app.post("/api/recipes")
@@ -447,10 +718,14 @@ def get_recipes(request: RecipeRequest):
         recipes = [format_recipe(raw) for raw in data["results"]]
 
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
-    # Fewest missing foods first, then the ones using most of the user's foods,
-    # then quickest; recipes without a time go last
+
+    # For "holiday", recipes tagged with a holiday come first. Then fewest missing
+    # foods, then the ones using most of the user's foods, then quickest;
+    # recipes without a time go last
+    holiday = request.occasion.strip().lower() == "holiday"
     available = {normalize_name(name) for name in request.ingredients}
     recipes.sort(key=lambda recipe: (
+        holiday and not is_holiday_recipe(recipe),
         len(recipe["missingIngredients"]),
         -foods_used(recipe, available),
         recipe["readyInMinutes"] is None,
@@ -459,6 +734,48 @@ def get_recipes(request: RecipeRequest):
     recipes = recipes[:5]
 
     for recipe in recipes:
+        # Swaps load separately from POST /api/swaps, so recipes never wait for Gemini
+        recipe["swaps"] = {}
         scale_servings(recipe, request.servings)
 
     return {"recipes": recipes}
+
+
+class SwapRecipe(BaseModel):
+    id: int
+    title: str
+    missingIngredients: list[str]
+
+
+class SwapRequest(BaseModel):
+    ingredients: list[str]
+    recipes: list[SwapRecipe]
+
+
+@app.post("/api/swaps")
+def get_swaps(request: SwapRequest):
+    # Swaps are a bonus: any problem (no key match, limit, Gemini error) just means no swaps
+    global swap_count
+    recipes = [recipe.model_dump() for recipe in request.recipes if recipe.missingIngredients]
+    if not recipes:
+        return {"swaps": {}}
+    if not GEMINI_API_KEY:
+        # Local testing: sample recipes can carry example swaps
+        sample = {recipe["id"]: recipe.get("swaps", {}) for recipe in load_sample("recipes.json")["recipes"]}
+        suggested = {recipe["id"]: sample.get(recipe["id"], {}) for recipe in recipes}
+    else:
+        if daily_swap_limit_reached():
+            return {"swaps": {}}
+        swap_count += 1
+        try:
+            suggested = suggest_swaps_with_gemini(recipes, request.ingredients)
+        except Exception as error:  # network, timeout, quota or bad JSON
+            print(f"[swaps] Gemini swap suggestions failed: {error!r}", flush=True)
+            return {"swaps": {}}
+
+    swaps = {}
+    for recipe in recipes:
+        valid = valid_swaps(suggested.get(recipe["id"], {}), recipe, request.ingredients)
+        if valid:
+            swaps[recipe["id"]] = valid
+    return {"swaps": swaps}

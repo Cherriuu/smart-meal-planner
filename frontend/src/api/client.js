@@ -42,3 +42,13 @@ export function getRecipes(preferences) {
     body: JSON.stringify(preferences),
   });
 }
+
+// Ask which of the user's foods could replace each recipe's missing ingredients.
+// recipes: [{ id, title, missingIngredients }]. Returns { swaps: { recipeId: { missing: food } } }
+export function getSwaps(ingredients, recipes) {
+  return request('/api/swaps', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ingredients, recipes }),
+  });
+}

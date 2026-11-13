@@ -112,6 +112,49 @@ a.stepper__link:hover { background: var(--color-primary-soft); }
 #ingredient-list { display: flex; flex-direction: column; gap: var(--space-2); }
 #ingredient-list .pill-row + .pill-row { margin-top: 0; }
 
+/* Photos with a tappable box over each detected food. One column on phones. */
+.review__photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+}
+.review__photo { margin: 0; }
+.photo-boxes {
+  position: relative; /* boxes are placed in % of this, which is exactly the photo */
+  line-height: 0;
+  border-radius: var(--radius-check);
+  overflow: hidden;
+}
+.photo-boxes img { display: block; width: 100%; height: auto; }
+.photo-box {
+  position: absolute;
+  padding: 0;
+  border: 3px solid var(--color-primary);
+  border-radius: var(--radius-check);
+  background: transparent;
+  box-shadow: 0 0 0 1px var(--color-surface); /* stays visible on dark photos */
+  cursor: pointer;
+}
+.photo-box__label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  background: var(--color-primary);
+  color: var(--color-surface);
+  font: 600 var(--text-sm) / 1.5 var(--font-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom-right-radius: var(--radius-check);
+}
+/* Unchecked: faded and dashed, with the name crossed out (not color alone) */
+.photo-box[aria-pressed="false"] { opacity: 0.45; border-style: dashed; }
+.photo-box[aria-pressed="false"] .photo-box__label { text-decoration: line-through; }
+.photo-box:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+
 /* ---------- Recipes ---------- */
 .recipes__title { font-size: var(--text-lg); }
 .recipes__subtitle { font-size: var(--text-base); margin-top: var(--space-3); }
