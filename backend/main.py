@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -19,9 +20,11 @@ load_dotenv()
 SPOONACULAR_API_KEY = os.getenv("SPOONACULAR_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
-# Stop when Spoonacular reports fewer points left than this (one search is ~4.3 points,
-# ~5.3 with a calorie/protein/sugar limit)
+# Stop when Spoonacular reports fewer points left than this (one search is ~3.2 points,
+# ~4.2 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
+# How many different searches to remember in memory (oldest is forgotten first)
+SEARCH_CACHE_SIZE = 100
 GEMINI_MODEL = "gemini-3.8-flash"
 # Photo detection gives up quickly: ~15 s per attempt and at most 1 SDK retry,
 # then one try with SWAP_MODEL (Flash-Lite) if the main model is overloaded
@@ -94,6 +97,9 @@ PANTRY_STAPLES = {
     "vinegar", "soy sauce", "chicken broth", "vegetable broth",
     "ground cinnamon", "ground cumin", "dried oregano", "dried thyme", "bay", "nutmeg",
     "red pepper flake",
+    # The plain forms recipes use
+    "cinnamon", "cumin", "oregano", "thyme", "paprika", "garlic powder", "onion powder",
+    "chili powder", "italian seasoning", "granulated sugar", "dried basil",
 }
 # Words that can come before a food and still be that food ("cherry tomato" is a tomato,
 # "sundried tomato" isn't)
@@ -114,7 +120,11 @@ DIFFERENT_PRODUCT_WORDS = {
     "powder", "paste", "extract", "seasoning", "oil", "vinegar", "butter", "spread",
     "jam", "jelly", "syrup", "chocolate", "flour", "noodle", "pasta", "bread",
     "tortilla", "cracker", "chip", "cereal", "cake", "pudding",
+    "nugget", "jerky", "pie", "pepper",
 }
+# (user's food, recipe's food) pairs that are never the same food. "cheese" can't go in
+# DIFFERENT_PRODUCT_WORDS, since "parmesan cheese" must still cover "parmesan".
+NOT_THE_SAME = {("cream cheese", "cream")}
 # "... butter" counts as butter (a basic), except these: nut and seed butters,
 # apple butter, cocoa butter, shea butter
 NOT_BUTTER = ("peanut", "almond", "cashew", "hazelnut", "pecan", "walnut",
@@ -170,6 +180,9 @@ search_count = 0
 search_date = None
 # Points left on the shared key, from Spoonacular's last response (None = unknown)
 quota_left = None
+# Formatted Spoonacular results for searches already made, so repeating a search (or only
+# changing servings or appliances) costs no points. Cleared when the server restarts.
+search_cache = {}
 # In-memory Gemini photo detection counter for the current UTC day
 detect_count = 0
 detect_date = None
@@ -289,11 +302,11 @@ def photo_too_large(image):
 def search_spoonacular(request):
     global search_count, quota_left
     # One complexSearch call returns everything we need for every recipe.
-    # Ask for 30 because our filters (missing foods, occasion, appliances) drop many.
+    # Ask for 20 because our filters (missing foods, occasion, appliances) drop some.
     foods = [name for name in request.ingredients if normalize_name(name) not in SPICES]
     params = {
         "includeIngredients": ",".join(foods),
-        "number": 30,
+        "number": 20,
         "addRecipeInformation": True,
         "addRecipeInstructions": True,
         "addRecipeNutrition": True,
@@ -302,7 +315,12 @@ def search_spoonacular(request):
         "sort": "max-used-ingredients",
         "ignorePantry": True,
     }
-    # No "type" param: the occasion is filtered by our own code (fits_request)
+    # Send all of the occasion's meal types ("Potluck" -> "side dish,appetizer"). The docs only
+    # show one value, but a real test returned recipes matching any of them (OR).
+    # fits_occasion re-checks the types locally as a safety net. Casual (no types) sends none.
+    recipe_types = OCCASION_TYPES.get(request.occasion.strip().lower(), [])
+    if recipe_types:
+        params["type"] = ",".join(recipe_types)
     if request.maxCalories is not None:
         params["maxCalories"] = request.maxCalories
     if request.highProtein:
@@ -311,7 +329,6 @@ def search_spoonacular(request):
         params["maxSugar"] = LOW_SUGAR_MAX
     # Key goes in a header, not the URL, so it never shows up in error messages
     headers = {"x-api-key": SPOONACULAR_API_KEY}
-    print(f"[recipes] Spoonacular params (key is in a header, not here): {params}", flush=True)  # DEBUG recipes
     response = httpx.get(
         "https://api.spoonacular.com/recipes/complexSearch",
         params=params,
@@ -329,7 +346,6 @@ def search_spoonacular(request):
     if SAVE_SPOONACULAR:
         CAPTURE_FILE.write_text(json.dumps(response.json(), indent=2))
         print(f"[capture] saved this Spoonacular response to {CAPTURE_FILE}", flush=True)
-    print(f"[recipes] Spoonacular totalResults={response.json().get('totalResults')}, returned {len(response.json().get('results', []))} recipes", flush=True)  # DEBUG recipes
     return response.json()
 
 
@@ -623,6 +639,8 @@ def has_food(name, available):
     # "cherry tomato" counts as "tomato", but "sundried tomato" and "potato" don't.
     # Works both ways: a user's "red bell pepper" covers a recipe's "bell pepper".
     for food in available:
+        if (food, name) in NOT_THE_SAME:
+            continue
         if name == food:
             return True
         if name.endswith(" " + food) and only_variety_words(name[:-len(food)]):
@@ -636,29 +654,28 @@ def has_food(name, available):
 
 
 def foods_used(recipe, available):
-    # How many of the user's foods this recipe uses; each counts once, basics and pantry staples don't count
+    # How many of the user's foods this recipe uses; each counts once. Basics, pantry
+    # staples and spices don't count.
+    not_counted = SKIPPED_INGREDIENTS | PANTRY_STAPLES | SPICES
     names = [normalize_name(ingredient["name"]) for ingredient in recipe["ingredients"]]
-    names = [
-        name for name in names
-        if name not in SKIPPED_INGREDIENTS and name not in PANTRY_STAPLES and name not in NON_FOOD
-    ]
+    names = [name for name in names if name not in not_counted and name not in NON_FOOD]
     return sum(
         1 for food in available
-        if food not in SKIPPED_INGREDIENTS and food not in PANTRY_STAPLES
-        and any(has_food(name, {food}) for name in names)
+        if food not in not_counted and any(has_food(name, {food}) for name in names)
     )
 
 
 def missing_ingredients(recipe, available):
     # Display names of the foods this recipe needs that the user doesn't have.
-    # Basics (salt, oil, butter...), pantry staples (garlic, flour...), kitchen supplies and
-    # equipment listed as an ingredient don't count.
+    # Basics (salt, oil, butter...), pantry staples (garlic, flour...), spices, kitchen
+    # supplies and equipment listed as an ingredient don't count.
     missing = []
     for ingredient in recipe["ingredients"]:
         name = normalize_name(ingredient["name"])
         if (
             name in SKIPPED_INGREDIENTS
             or name in PANTRY_STAPLES
+            or name in SPICES
             or name in NON_FOOD
             or EQUIPMENT_WORDS.search(name)
         ):
@@ -693,32 +710,19 @@ def is_holiday_recipe(recipe):
     return any(occasion in HOLIDAY_OCCASIONS for occasion in recipe.get("occasions", []))
 
 
-
-
-debug_dropped = {}  # DEBUG recipes: how many recipes each check dropped in this request
-
-
 def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
-        debug_dropped["no steps"] = debug_dropped.get("no steps", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: no steps", flush=True)  # DEBUG recipes
         return False  # nothing to follow
     if not fits_occasion(recipe, request.occasion):
-        debug_dropped["occasion"] = debug_dropped.get("occasion", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: occasion (dishTypes={recipe.get('dishTypes')})", flush=True)  # DEBUG recipes
         return False
     selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
-        debug_dropped["appliances"] = debug_dropped.get("appliances", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: appliances (equipment={recipe['appliances']})", flush=True)  # DEBUG recipes
         return False
     available = {normalize_name(name) for name in request.ingredients}
     recipe["missingIngredients"] = missing_ingredients(recipe, available)
     if len(recipe["missingIngredients"]) > MAX_MISSING_INGREDIENTS:
-        debug_dropped["too many missing"] = debug_dropped.get("too many missing", 0) + 1  # DEBUG recipes
-        print(f"[recipes]   dropped {recipe['title']!r}: too many missing ({len(recipe['missingIngredients'])}): {recipe['missingIngredients']}", flush=True)  # DEBUG recipes
         return False
     return True
 
@@ -755,6 +759,18 @@ def detect_ingredients(images: list[UploadFile] = File(...)):
         return detect_unavailable_response()
 
 
+def search_cache_key(request):
+    # Everything that changes what Spoonacular returns. Servings and appliances aren't
+    # here: they're applied afterwards to the same results.
+    return (
+        tuple(sorted({normalize_name(name) for name in request.ingredients})),
+        request.occasion.strip().lower(),
+        request.maxCalories,
+        request.highProtein,
+        request.lowSugar,
+    )
+
+
 @app.post("/api/recipes")
 def get_recipes(request: RecipeRequest):
     if USE_CAPTURE:
@@ -774,24 +790,24 @@ def get_recipes(request: RecipeRequest):
                 if recipe["calories"] is None or recipe["calories"] <= request.maxCalories
             ]
     else:
-        if daily_limit_reached():
-            return daily_limit_response()
-        try:
-            data = search_spoonacular(request)
-        except httpx.HTTPStatusError as error:
-            # 402 means Spoonacular says our daily points are used up
-            if error.response.status_code == 402:
+        key = search_cache_key(request)
+        if key not in search_cache:
+            if daily_limit_reached():
                 return daily_limit_response()
-            raise
-        recipes = [format_recipe(raw) for raw in data["results"]]
+            try:
+                data = search_spoonacular(request)
+            except httpx.HTTPStatusError as error:
+                # 402 means Spoonacular says our daily points are used up
+                if error.response.status_code == 402:
+                    return daily_limit_response()
+                raise
+            if len(search_cache) >= SEARCH_CACHE_SIZE:
+                search_cache.pop(next(iter(search_cache)))  # forget the oldest search
+            search_cache[key] = [format_recipe(raw) for raw in data["results"]]
+        # A fresh copy each time: filtering, scaling and swaps change the recipes in place
+        recipes = copy.deepcopy(search_cache[key])
 
-    debug_dropped.clear()  # DEBUG recipes
-    debug_left = len(recipes)  # DEBUG recipes
-    print(f"[recipes] {debug_left} recipes before filtering (occasion={request.occasion!r}, appliances={request.appliances})", flush=True)  # DEBUG recipes
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
-    for debug_reason in ("no steps", "occasion", "appliances", "too many missing"):  # DEBUG recipes
-        debug_left -= debug_dropped.get(debug_reason, 0)  # DEBUG recipes
-        print(f"[recipes] after {debug_reason} check: {debug_left} left (dropped {debug_dropped.get(debug_reason, 0)})", flush=True)  # DEBUG recipes
 
     # For "holiday", recipes tagged with a holiday come first. Then fewest missing
     # foods, then the ones using most of the user's foods, then quickest;
@@ -806,7 +822,6 @@ def get_recipes(request: RecipeRequest):
         recipe["readyInMinutes"] or 0,
     ))
     recipes = recipes[:5]
-    print(f"[recipes] returning {len(recipes)}: {[recipe['title'] for recipe in recipes]}", flush=True)  # DEBUG recipes
 
     for recipe in recipes:
         # Swaps load separately from POST /api/swaps, so recipes never wait for Gemini
