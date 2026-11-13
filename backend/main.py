@@ -451,15 +451,21 @@ def detect_foods_with_gemini(images):
             },
         },
     }
-    # The main model gets 1 SDK retry; the fallback is a last resort, so no retry there
-    attempts = [(GEMINI_MODEL, DETECT_RETRY), (SWAP_MODEL, None)]
-    for model, retry in attempts:
+    # The main model uses DETECT_RETRY; the fallback is a last resort, so no retry there.
+    # Listing foods and boxes needs no reasoning, so each model gets its lowest thinking
+    # level: 3.8 Flash's lowest is "low" ("minimal" is an error there); Flash-Lite has "minimal".
+    attempts = [(GEMINI_MODEL, DETECT_RETRY, "low"), (SWAP_MODEL, None, "minimal")]
+    for model, retry, thinking_level in attempts:
         http_options = {"timeout": DETECT_TIMEOUT_MS}
         if retry:
             http_options["retry_options"] = retry
         client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_options)
         try:
-            response = client.models.generate_content(model=model, contents=parts + [prompt], config=config)
+            response = client.models.generate_content(
+                model=model,
+                contents=parts + [prompt],
+                config={**config, "thinking_config": {"thinking_level": thinking_level}},
+            )
         except Exception as error:
             if model == SWAP_MODEL or not gemini_overloaded(error):
                 raise
@@ -470,8 +476,9 @@ def detect_foods_with_gemini(images):
 
 
 def gemini_overloaded(error):
-    # 503 from Gemini, or the request timed out: worth one try with the fallback model
-    if isinstance(error, genai_errors.ServerError) and error.code == 503:
+    # 503 (overloaded), 504 / DEADLINE_EXCEEDED, or our own timeout: worth one try
+    # with the fallback model
+    if isinstance(error, genai_errors.ServerError) and error.code in (503, 504):
         return True
     return isinstance(error, (httpx.TimeoutException, TimeoutError)) or "Timeout" in type(error).__name__
 
@@ -486,7 +493,7 @@ def clean_detections(raw_detections, photo_count):
             ymin, xmin, ymax, xmax = (min(max(float(value), 0), 1000) for value in item["box_2d"])
         except (KeyError, TypeError, ValueError):
             continue  # malformed item: skip it, keep the rest
-        if not name or name in SKIPPED_INGREDIENTS or name in NON_FOOD:
+        if not name or name in SKIPPED_INGREDIENTS or name in NON_FOOD or EQUIPMENT_WORDS.search(name):
             continue
         if not 0 <= photo < photo_count:
             continue
@@ -546,10 +553,17 @@ def is_salt_or_pepper(name):
 
 
 def clean_ingredients(names):
+    # The detected food list: no basics, kitchen supplies or equipment ("skillet"), no repeats
     cleaned = []
     for name in names:
         name = normalize_name(name)
-        if name and name not in SKIPPED_INGREDIENTS and name not in cleaned:
+        if (
+            name
+            and name not in SKIPPED_INGREDIENTS
+            and name not in NON_FOOD
+            and not EQUIPMENT_WORDS.search(name)
+            and name not in cleaned
+        ):
             cleaned.append(name)
     return cleaned
 
