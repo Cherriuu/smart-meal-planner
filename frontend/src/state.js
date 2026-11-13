@@ -14,6 +14,7 @@ const state = {
   removed: new Set(), // names the user deleted, so a re-detect doesn't bring them back
   recipes: null,      // last recipe results
   recipesFor: null,   // the request those results belong to
+  swapsFor: null,     // the request whose recipes already have their smart swaps
 };
 
 export function getState() {

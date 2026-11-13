@@ -89,7 +89,8 @@
         "Whisk the eggs with salt and pepper, pour them in and stir gently until just set.",
         "Crumble the feta over the top and serve."
       ],
-      "appliances": ["frying pan"]
+      "appliances": ["frying pan"],
+      "swaps": { "feta cheese": "cheddar cheese" }
     },
     {
       "id": 900002,

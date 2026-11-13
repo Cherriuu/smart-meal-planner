@@ -21,6 +21,9 @@ DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "50"))
 # ~5.3 with a calorie/protein/sugar limit)
 QUOTA_RESERVE = 5
 GEMINI_MODEL = "gemini-3.6-flash"
+# Smart swaps use the fast, cheap Flash-Lite model and their own daily limit
+SWAP_MODEL = "gemini-3.5-flash-lite"
+DAILY_SWAP_LIMIT = int(os.getenv("DAILY_SWAP_LIMIT", "100"))
 # Photo upload limits, checked before anything is sent to Gemini
 MAX_PHOTOS = 5
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
@@ -127,6 +130,9 @@ quota_left = None
 # In-memory Gemini photo detection counter for the current UTC day
 detect_count = 0
 detect_date = None
+# In-memory Gemini smart swap counter for the current UTC day
+swap_count = 0
+swap_date = None
 
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
@@ -174,6 +180,15 @@ def daily_detect_limit_reached():
         detect_date = today
         detect_count = 0
     return detect_count >= DAILY_DETECT_LIMIT
+
+
+def daily_swap_limit_reached():
+    global swap_count, swap_date
+    today = datetime.now(timezone.utc).date()
+    if swap_date != today:
+        swap_date = today
+        swap_count = 0
+    return swap_count >= DAILY_SWAP_LIMIT
 
 
 def daily_detect_limit_response():
@@ -313,6 +328,57 @@ def health():
         "status": "ok",
         "spoonacular_key_loaded": bool(SPOONACULAR_API_KEY),
         "gemini_key_loaded": bool(GEMINI_API_KEY),
+    }
+
+
+def suggest_swaps_with_gemini(recipes, user_foods):
+    # One request for all recipes; returns {recipe id: {missing ingredient: suggested food}}
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 8000})
+    payload = {
+        "userFoods": user_foods,
+        "recipes": [
+            {"id": recipe["id"], "title": recipe["title"], "missingIngredients": recipe["missingIngredients"]}
+            for recipe in recipes if recipe["missingIngredients"]
+        ],
+    }
+    prompt = (
+        "For each recipe below, and each of its missing ingredients, suggest one food from "
+        "userFoods that could replace it in that recipe. Use the food's name exactly as written "
+        "in userFoods, or an empty string if nothing reasonable works.\n" + json.dumps(payload)
+    )
+    response = client.models.generate_content(
+        model=SWAP_MODEL,
+        contents=[prompt],
+        config={
+            "response_mime_type": "application/json",
+            "response_json_schema": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "recipeId": {"type": "integer"},
+                        "missing": {"type": "string"},
+                        "swap": {"type": "string"},
+                    },
+                    "required": ["recipeId", "missing", "swap"],
+                },
+            },
+        },
+    )
+    swaps = {}
+    for item in json.loads(response.text):
+        if item.get("swap"):
+            swaps.setdefault(item["recipeId"], {})[item["missing"]] = item["swap"]
+    return swaps
+
+
+def valid_swaps(swaps, recipe, user_foods):
+    # Keep a swap only for a real missing ingredient, pointing at one of the user's own foods
+    by_name = {normalize_name(food): food for food in user_foods}
+    return {
+        missing: by_name[normalize_name(swap)]
+        for missing, swap in swaps.items()
+        if missing in recipe["missingIngredients"] and isinstance(swap, str) and normalize_name(swap) in by_name
     }
 
 
@@ -472,26 +538,21 @@ def is_holiday_recipe(recipe):
     return any(occasion in HOLIDAY_OCCASIONS for occasion in recipe.get("occasions", []))
 
 
-debug_dropped = {}  # DEBUG variety: why recipes were dropped in this request
 
 
 def fits_request(recipe, request):
     # Also records what's missing on the recipe, since the response shows it
     if not recipe["steps"]:
-        debug_dropped["no steps"] = debug_dropped.get("no steps", 0) + 1  # DEBUG variety
         return False  # nothing to follow
     if not fits_occasion(recipe, request.occasion):
-        debug_dropped["occasion"] = debug_dropped.get("occasion", 0) + 1  # DEBUG variety
         return False
     selected = {appliance.strip().lower() for appliance in request.appliances}
     # No appliances selected means the user didn't say, so don't filter by them
     if selected and not needs_only_selected_appliances(recipe, selected):
-        debug_dropped["appliances"] = debug_dropped.get("appliances", 0) + 1  # DEBUG variety
         return False
     available = {normalize_name(name) for name in request.ingredients}
     recipe["missingIngredients"] = missing_ingredients(recipe, available)
     if len(recipe["missingIngredients"]) > MAX_MISSING_INGREDIENTS:
-        debug_dropped["too many missing"] = debug_dropped.get("too many missing", 0) + 1  # DEBUG variety
         return False
     return True
 
@@ -540,18 +601,8 @@ def get_recipes(request: RecipeRequest):
                 return daily_limit_response()
             raise
         recipes = [format_recipe(raw) for raw in data["results"]]
-        if data["results"]:  # DEBUG variety
-            first = data["results"][0]  # DEBUG variety
-            print(f"[variety] first raw result {first.get('title')!r}: occasions={first.get('occasions')!r} dishTypes={first.get('dishTypes')!r}", flush=True)  # DEBUG variety
 
-    debug_dropped.clear()  # DEBUG variety
-    debug_before = len(recipes)  # DEBUG variety
     recipes = [recipe for recipe in recipes if fits_request(recipe, request)]
-    debug_left = debug_before  # DEBUG variety
-    print(f"[variety] occasion={request.occasion!r}: {debug_before} recipes before filtering", flush=True)  # DEBUG variety
-    for debug_reason in ("no steps", "occasion", "appliances", "too many missing"):  # DEBUG variety
-        debug_left -= debug_dropped.get(debug_reason, 0)  # DEBUG variety
-        print(f"[variety]   after {debug_reason} filter: {debug_left} left (dropped {debug_dropped.get(debug_reason, 0)})", flush=True)  # DEBUG variety
 
     # For "holiday", recipes tagged with a holiday come first. Then fewest missing
     # foods, then the ones using most of the user's foods, then quickest;
@@ -568,6 +619,48 @@ def get_recipes(request: RecipeRequest):
     recipes = recipes[:5]
 
     for recipe in recipes:
+        # Swaps load separately from POST /api/swaps, so recipes never wait for Gemini
+        recipe["swaps"] = {}
         scale_servings(recipe, request.servings)
 
     return {"recipes": recipes}
+
+
+class SwapRecipe(BaseModel):
+    id: int
+    title: str
+    missingIngredients: list[str]
+
+
+class SwapRequest(BaseModel):
+    ingredients: list[str]
+    recipes: list[SwapRecipe]
+
+
+@app.post("/api/swaps")
+def get_swaps(request: SwapRequest):
+    # Swaps are a bonus: any problem (no key match, limit, Gemini error) just means no swaps
+    global swap_count
+    recipes = [recipe.model_dump() for recipe in request.recipes if recipe.missingIngredients]
+    if not recipes:
+        return {"swaps": {}}
+    if not GEMINI_API_KEY:
+        # Local testing: sample recipes can carry example swaps
+        sample = {recipe["id"]: recipe.get("swaps", {}) for recipe in load_sample("recipes.json")["recipes"]}
+        suggested = {recipe["id"]: sample.get(recipe["id"], {}) for recipe in recipes}
+    else:
+        if daily_swap_limit_reached():
+            return {"swaps": {}}
+        swap_count += 1
+        try:
+            suggested = suggest_swaps_with_gemini(recipes, request.ingredients)
+        except Exception as error:  # network, timeout, quota or bad JSON
+            print(f"[swaps] Gemini swap suggestions failed: {error!r}", flush=True)
+            return {"swaps": {}}
+
+    swaps = {}
+    for recipe in recipes:
+        valid = valid_swaps(suggested.get(recipe["id"], {}), recipe, request.ingredients)
+        if valid:
+            swaps[recipe["id"]] = valid
+    return {"swaps": swaps}

@@ -1,7 +1,7 @@
 // Step 4: recipes for the checked ingredients + the saved preferences.
 import { getState, checkedIngredients } from '../state.js';
 import { getPreferences } from '../preferences.js';
-import { getRecipes } from '../api/client.js';
+import { getRecipes, getSwaps } from '../api/client.js';
 import { escapeHtml, friendlyError } from '../util.js';
 
 function buildRequest() {
@@ -17,14 +17,22 @@ function buildRequest() {
   };
 }
 
+// "You'll also need: basil (or use your spinach), feta cheese" as plain text ('' if nothing's missing)
+function missingText(recipe) {
+  if (!recipe.missingIngredients?.length) return '';
+  const swaps = recipe.swaps ?? {};
+  const items = recipe.missingIngredients.map((name) => (swaps[name] ? `${name} (or use your ${swaps[name]})` : name));
+  return `You'll also need: ${items.join(', ')}`;
+}
+
 function recipeCard(recipe) {
   const meta = [
     recipe.readyInMinutes != null ? `${recipe.readyInMinutes} min` : null,
     recipe.calories != null ? `${recipe.calories} cal` : null,
     recipe.servings != null ? `${recipe.servings} servings` : null,
   ].filter(Boolean).join(' · ');
-  const missing = recipe.missingIngredients?.length
-    ? `<p class="text-soft">You'll also need: ${escapeHtml(recipe.missingIngredients.join(', '))}</p>`
+  const missing = missingText(recipe)
+    ? `<p class="text-soft" data-missing>${escapeHtml(missingText(recipe))}</p>`
     : '';
 
   const ingredients = recipe.ingredients
@@ -33,7 +41,7 @@ function recipeCard(recipe) {
   const steps = recipe.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
 
   return `
-    <article class="card">
+    <article class="card" data-recipe-id="${escapeHtml(recipe.id)}">
       ${recipe.image ? `<img class="card__image" src="${escapeHtml(recipe.image)}" alt="">` : ''}
       <div class="card__body">
         <h2 class="recipes__title">${escapeHtml(recipe.title)}</h2>
@@ -66,6 +74,33 @@ export function mountRecipes(root) {
       : '<p>No recipes match your ingredients and preferences. Go back to change them.</p>';
   }
 
+  // Smart swaps arrive after the cards are shown. They're a bonus: if the call fails,
+  // the cards just stay as they are. Saved on the recipes, so Back and forth reuses them.
+  async function loadSwaps(request, key, recipes) {
+    if (state.swapsFor === key) return; // already loaded, or still loading
+    state.swapsFor = key;
+    const needSwaps = recipes.filter((recipe) => recipe.missingIngredients?.length);
+    if (!needSwaps.length) return;
+    try {
+      const { swaps } = await getSwaps(
+        request.ingredients,
+        needSwaps.map(({ id, title, missingIngredients }) => ({ id, title, missingIngredients })),
+      );
+      for (const recipe of needSwaps) recipe.swaps = swaps[recipe.id] ?? {};
+    } catch {
+      if (state.swapsFor === key) state.swapsFor = null; // try again on the next visit
+      return;
+    }
+    // Only touch the lines that changed. Look them up on the page, not in this step's
+    // old HTML, since the user may have gone Back and returned while swaps loaded.
+    if (state.recipesFor !== key) return;
+    for (const recipe of needSwaps) {
+      if (!Object.keys(recipe.swaps).length) continue; // text unchanged, don't re-announce it
+      const line = document.querySelector(`#recipes-body [data-recipe-id="${CSS.escape(String(recipe.id))}"] [data-missing]`);
+      if (line) line.textContent = missingText(recipe);
+    }
+  }
+
   async function load() {
     const request = buildRequest();
     const key = JSON.stringify(request);
@@ -74,6 +109,7 @@ export function mountRecipes(root) {
     // (Every search costs the shared Spoonacular quota, and the list stays put.)
     if (state.recipesFor === key && state.recipes) {
       showResults(state.recipes);
+      loadSwaps(request, key, state.recipes);
       return;
     }
 
@@ -83,6 +119,7 @@ export function mountRecipes(root) {
       state.recipes = recipes;
       state.recipesFor = key;
       if (active) showResults(recipes);
+      loadSwaps(request, key, recipes);
     } catch (err) {
       if (!active) return;
       body.innerHTML = `
