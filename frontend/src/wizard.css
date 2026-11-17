@@ -354,7 +354,7 @@ a.stepper__link:hover { background: var(--color-primary-soft); }
   font-weight: 800;
 }
 .r-card__have svg { transform: rotate(-90deg); }
-.recipes__title { font-size: 1.2rem; }
+.recipes__title { font-size: 1.2rem; overflow-wrap: anywhere; }
 .card__meta { display: flex; flex-wrap: wrap; gap: 0.9rem; }
 .card__meta span { display: inline-flex; align-items: center; gap: 0.3rem; }
 
@@ -413,18 +413,19 @@ a.stepper__link:hover { background: var(--color-primary-soft); }
 .card details ul, .card details ol { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
 /* Ingredients as small chips; the ones you don't have are pink */
 .card details .recipes__ings { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.recipes__ings li { padding: 0.2rem 0.6rem; border-radius: var(--radius-button); background: var(--color-primary-soft); font-size: 0.85rem; }
+.recipes__ings li { padding: 0.2rem 0.6rem; border-radius: var(--radius-button); background: var(--color-primary-soft); font-size: 0.85rem; overflow-wrap: anywhere; }
 .recipes__ings li.recipes__ing--missing { background: var(--color-accent-soft); color: var(--color-accent); font-weight: 700; }
 /* Steps with navy circle numbers */
 .card details .recipes__steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
 .recipes__steps li {
   counter-increment: step;
   display: grid;
-  grid-template-columns: 1.8rem 1fr;
+  grid-template-columns: 1.8rem minmax(0, 1fr); /* minmax lets long text wrap instead of widening the card */
   gap: 0.6rem;
   padding: 0.45rem 0;
   font-size: 0.92rem;
 }
+.recipes__steps li span { overflow-wrap: anywhere; }
 .recipes__steps li::before {
   content: counter(step);
   display: grid;

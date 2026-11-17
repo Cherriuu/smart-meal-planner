@@ -66,6 +66,53 @@ function suggestionsFor(prefs) {
   return tips;
 }
 
+// ---------- Display-only clean-up of recipe text ----------
+
+const URL_PATTERN = /https?:\/\/\S+/g;
+const CHATTER = /\bI['’]ve\b|\bI['’]m\b| my |recipe is/i;
+
+// Steps without links or blog chatter. If that would remove everything, keep all the
+// steps (still without links). The list numbers itself, so it stays 1, 2, 3...
+function displaySteps(steps) {
+  const cleaned = steps.map((step) => ({
+    text: step.replace(URL_PATTERN, '').replace(/\s{2,}/g, ' ').trim(),
+    hadUrl: /https?:\/\//.test(step),
+  }));
+  const isChatter = ({ text, hadUrl }) =>
+    (text.length > 350 && CHATTER.test(text)) || (hadUrl && text.length > 200);
+  const kept = cleaned.filter((step) => step.text && !isChatter(step));
+  return (kept.length ? kept : cleaned).map((step) => step.text).filter(Boolean);
+}
+
+// Words that only look plural
+const NOT_PLURAL = new Set(['molasses', 'swiss']);
+
+// One word made singular: "Tbsps" -> "Tbsp", "pinches" -> "pinch", "lemons" -> "lemon".
+// Words ending in "ss", "us", "is" or "ous" ("hummus", "glass") are left alone.
+function singular(word, { name = false } = {}) {
+  const lower = word.toLowerCase();
+  if (!lower.endsWith('s') || /(ss|us|is|ous)$/.test(lower) || NOT_PLURAL.has(lower)) return word;
+  if (name && lower.endsWith('ies') && lower.length > 4) return `${word.slice(0, -3)}y`; // berries -> berry
+  if (/(ches|shes|xes)$/.test(lower) || (name && lower.endsWith('oes'))) return word.slice(0, -2); // tomatoes -> tomato
+  return word.slice(0, -1);
+}
+
+// "1 Tbsp butter", "½ cup milk", "salt and pepper" (no "2 servings ...")
+function ingredientText({ amount, unit, name }) {
+  if (/^servings?$/i.test(unit ?? '')) return name;
+  const shown = formatAmount(amount);
+  const oneOrLess = shown !== '' && (Number(amount) <= 1 || shown === '1'); // 1.02 shows as "1"
+  let displayUnit = unit ?? '';
+  let displayName = name;
+  if (oneOrLess && displayUnit.length > 2) displayUnit = singular(displayUnit); // "oz", "g", "ml" stay
+  if (oneOrLess && !displayUnit) {
+    const words = displayName.split(' ');
+    words[words.length - 1] = singular(words[words.length - 1], { name: true }); // only the last word
+    displayName = words.join(' ');
+  }
+  return [shown, displayUnit, displayName].filter((part) => part !== '' && part != null).join(' ');
+}
+
 function recipeCard(recipe, index) {
   const missingNames = recipe.missingIngredients ?? [];
   const meta = [
@@ -85,11 +132,11 @@ function recipeCard(recipe, index) {
 
   const ingredients = recipe.ingredients
     .map((i) => {
-      const text = [formatAmount(i.amount), i.unit, i.name].filter((part) => part !== '' && part != null).join(' ');
-      return `<li${missingNames.includes(i.name) ? ' class="recipes__ing--missing"' : ''}>${escapeHtml(text)}</li>`;
+      // Pink "missing" style is matched on the original name, not the tidied one
+      return `<li${missingNames.includes(i.name) ? ' class="recipes__ing--missing"' : ''}>${escapeHtml(ingredientText(i))}</li>`;
     })
     .join('');
-  const steps = recipe.steps.map((step) => `<li><span>${escapeHtml(step)}</span></li>`).join('');
+  const steps = displaySteps(recipe.steps).map((step) => `<li><span>${escapeHtml(step)}</span></li>`).join('');
   const equipment = (recipe.appliances ?? []).map((name) => `<li>${escapeHtml(name)}</li>`).join('');
 
   return `
