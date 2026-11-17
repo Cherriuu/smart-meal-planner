@@ -63,6 +63,7 @@ function recipeCard(recipe) {
     .map((i) => `<li>${escapeHtml([i.amount, i.unit, i.name].filter((part) => part !== '' && part != null).join(' '))}</li>`)
     .join('');
   const steps = recipe.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
+  const equipment = (recipe.appliances ?? []).map((name) => `<li>${escapeHtml(name)}</li>`).join('');
 
   return `
     <article class="card" data-recipe-id="${escapeHtml(recipe.id)}">
@@ -77,6 +78,7 @@ function recipeCard(recipe) {
           <ul>${ingredients}</ul>
           <h3 class="recipes__subtitle">Steps</h3>
           <ol>${steps}</ol>
+          ${equipment ? `<h3 class="recipes__subtitle">Equipment</h3><ul>${equipment}</ul>` : ''}
         </details>
       </div>
     </article>`;
@@ -105,7 +107,7 @@ export function mountRecipes(root) {
 
   function showResults(recipes) {
     if (recipes.length) {
-      body.innerHTML = `<div class="grid">${recipes.map(recipeCard).join('')}</div>`;
+      body.innerHTML = `<div class="grid recipes__grid">${recipes.map(recipeCard).join('')}</div>`;
       return;
     }
     const tips = suggestionsFor(getPreferences()).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('');
