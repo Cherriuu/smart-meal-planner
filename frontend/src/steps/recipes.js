@@ -25,6 +25,30 @@ function missingText(recipe) {
   return `You'll also need: ${items.join(', ')}`;
 }
 
+// "Holiday · 2 servings · up to 2000 cal · High protein"
+function settingsSummary(prefs) {
+  return [
+    prefs.occasion,
+    `${prefs.servings} ${prefs.servings === 1 ? 'serving' : 'servings'}`,
+    prefs.maxCalories !== '' ? `up to ${prefs.maxCalories} cal` : null,
+    prefs.highProtein ? 'High protein' : null,
+    prefs.lowSugar ? 'Low sugar' : null,
+  ].filter(Boolean).join(' · ');
+}
+
+// Ideas for when nothing matched, based on the current settings.
+// (No appliances selected means "don't filter", so only 1-3 selected counts as "a few".)
+function suggestionsFor(prefs) {
+  const tips = [];
+  if (prefs.highProtein) tips.push('Try turning off High protein');
+  if (prefs.lowSugar) tips.push('Try turning off Low sugar');
+  if (prefs.maxCalories !== '') tips.push('Try raising or removing your calorie limit');
+  if (prefs.occasion !== 'Casual') tips.push('Try choosing Casual for more options');
+  if (prefs.appliances.length > 0 && prefs.appliances.length <= 3) tips.push('Try selecting more appliances');
+  tips.push('Or add more ingredients');
+  return tips;
+}
+
 function recipeCard(recipe) {
   const meta = [
     recipe.readyInMinutes != null ? `${recipe.readyInMinutes} min` : null,
@@ -64,14 +88,36 @@ export function mountRecipes(root) {
 
   root.innerHTML = `
     <h1 id="step-title" tabindex="-1">Recipes</h1>
+    <div class="row recipes__settings">
+      <p class="text-soft" id="settings-summary"></p>
+      <button class="btn btn--secondary btn--small" type="button" data-edit-prefs>Edit preferences</button>
+    </div>
     <div id="recipes-body" aria-live="polite"></div>
   `;
   const body = root.querySelector('#recipes-body');
+  root.querySelector('#settings-summary').textContent = settingsSummary(getPreferences());
+
+  // Same as clicking "Preferences" in the step bar: the wizard listens for the URL change.
+  root.addEventListener('click', (event) => {
+    if (event.target.closest('[data-edit-prefs]')) location.hash = '#/preferences';
+    else if (event.target.closest('[data-back-review]')) location.hash = '#/review';
+  });
 
   function showResults(recipes) {
-    body.innerHTML = recipes.length
-      ? `<div class="grid">${recipes.map(recipeCard).join('')}</div>`
-      : '<p>No recipes match your ingredients and preferences. Go back to change them.</p>';
+    if (recipes.length) {
+      body.innerHTML = `<div class="grid">${recipes.map(recipeCard).join('')}</div>`;
+      return;
+    }
+    const tips = suggestionsFor(getPreferences()).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('');
+    body.innerHTML = `
+      <div class="stack">
+        <p>No recipes match your ingredients and preferences.</p>
+        <ul>${tips}</ul>
+        <div class="row">
+          <button class="btn" type="button" data-edit-prefs>Edit preferences</button>
+          <button class="btn btn--secondary" type="button" data-back-review>Back to ingredients</button>
+        </div>
+      </div>`;
   }
 
   // Smart swaps arrive after the cards are shown. They're a bonus: if the call fails,
