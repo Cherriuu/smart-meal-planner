@@ -160,4 +160,18 @@ a.stepper__link:hover { background: var(--color-primary-soft); }
 .recipes__title { font-size: var(--text-lg); }
 .recipes__subtitle { font-size: var(--text-base); margin-top: var(--space-3); }
 .card details ul, .card details ol { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
-.card summary { cursor: pointer; font-weight: 600; min-height: var(--touch); display: flex; align-items: center; }
+
+/* Each card keeps its own height when one is opened */
+.recipes__grid { align-items: start; }
+.card summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none; /* hide the browser's own marker, we draw an arrow instead */
+}
+.card summary::-webkit-details-marker { display: none; }
+.card summary::before { content: "\25B8"; } /* ▸ closed */
+.card details[open] > summary::before { content: "\25BE"; } /* ▾ open */
