@@ -4,16 +4,22 @@
 .wizard {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: 1.75rem;
 }
+.wizard__step > * + * { margin-top: var(--space-5); }
+/* A new step rises in gently */
+.wizard__step--enter { animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); }
 
-/* ---------- Steps bar ---------- */
+/* ---------- Steps bar: one white pill holding all four steps ---------- */
 .stepper {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0.4rem;
   display: flex;
-  gap: var(--space-2);
+  gap: 0.4rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-button);
+  box-shadow: var(--shadow-card);
 }
 .stepper__item {
   flex: 1 1 0;
@@ -22,14 +28,14 @@
 .stepper__link {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  justify-content: center;
+  gap: 0.55rem;
   min-height: var(--touch);
-  padding: 0 var(--space-3);
+  padding: 0 0.9rem;
   border-radius: var(--radius-button);
-  background: var(--color-surface);
   color: var(--color-ink-soft);
-  font-size: var(--text-sm);
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
   text-decoration: none;
 }
 a.stepper__link:hover { background: var(--color-primary-soft); }
@@ -39,35 +45,58 @@ a.stepper__link:hover { background: var(--color-primary-soft); }
   place-items: center;
   width: 1.75rem;
   height: 1.75rem;
-  border: 2px solid currentColor;
   border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 800;
+  transition: background-color 0.2s, transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
 .stepper__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Finished: navy circle with a white check, still a link back */
 .stepper__item--done .stepper__link { color: var(--color-primary); }
 .stepper__item--done .stepper__num {
   background: var(--color-primary);
-  border-color: var(--color-primary);
   color: #fff;
+  transform: scale(1.05);
 }
+/* Current: filled navy pill */
 .stepper__item--current .stepper__link {
   background: var(--color-primary);
   color: #fff;
+}
+.stepper__item--current .stepper__num {
+  background: #fff;
+  color: var(--color-primary);
 }
 
 /* On phones only the current step keeps its name */
 @media (max-width: 40rem) {
   .stepper__item--current { flex: 3 1 0; }
   .stepper__item:not(.stepper__item--current) .stepper__label { display: none; }
-  .stepper__item:not(.stepper__item--current) .stepper__link { justify-content: center; padding: 0; }
+  .stepper__item:not(.stepper__item--current) .stepper__link { padding: 0; }
 }
 
-/* ---------- Back / Next ---------- */
+/* ---------- Back / Next: a bar fixed to the bottom of the screen ---------- */
 .wizard__nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  padding: var(--space-4) 0;
+  /* Fades in so cards scrolling underneath don't end with a hard edge */
+  background: linear-gradient(180deg, rgba(211, 225, 242, 0), var(--color-bg) 45%);
+}
+.wizard__nav-inner {
+  width: min(100% - 2 * var(--gutter), 64rem);
+  margin-inline: auto;
   display: flex;
+  align-items: center;
   gap: var(--space-3);
 }
 .wizard__next { margin-left: auto; } /* stays on the right even when Back is hidden */
@@ -75,103 +104,336 @@ a.stepper__link:hover { background: var(--color-primary-soft); }
 #step h1:focus { outline: none; } /* focus moves here for screen readers; no ring needed */
 
 /* ---------- Upload ---------- */
-.upload__input:focus-visible + .btn {
+/* Big dashed drop zone. It is the <label> of the hidden file input. */
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 260px;
+  padding: var(--space-6);
+  border: 3px dashed var(--color-sky);
+  border-radius: var(--radius-card);
+  background: var(--color-primary-soft);
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.drop:hover,
+.drop--over { background: #dbe8f7; border-color: var(--color-primary); }
+.drop strong { font-size: 1.2rem; }
+.drop__camera {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 0.4rem;
+  border-radius: 24px;
+  background: var(--color-primary);
+  color: #fff;
+}
+.upload__input:focus-visible + .drop {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
+
+/* Chosen photos: square thumbnails with a round remove button */
 .upload__list {
   list-style: none;
-  margin: 0;
+  margin: var(--space-4) 0 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.upload__file {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
   gap: var(--space-3);
-  min-width: 0;
 }
+.upload__list:empty { display: none; }
 .upload__thumb {
-  flex: none;
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--color-primary-soft);
+  animation: pop 0.35s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.upload__thumb img { width: 100%; height: 100%; object-fit: cover; }
+.upload__remove {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
   width: 2rem;
   height: 2rem;
-  border-radius: 50%;
-  object-fit: cover;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--color-ink);
 }
-.upload__name {
+.upload__card .field__error { margin-top: var(--space-3); }
+.upload__fallback { margin-top: var(--space-3); }
+.upload__manual { text-align: center; }
+
+/* Scanning overlay, shown while the photos are being read */
+.scan {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(9, 41, 70, 0.55);
+  animation: fade 0.2s;
+}
+.scan__card { width: min(100%, 28rem); padding: var(--space-4); text-align: center; }
+.scan__photo {
+  position: relative;
+  aspect-ratio: 4 / 3;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border-radius: var(--radius-tile);
+  background: var(--color-primary-soft);
 }
+.scan__photo img { width: 100%; height: 100%; object-fit: cover; }
+.scan__line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 35%;
+  background: linear-gradient(180deg, transparent, rgba(246, 182, 204, 0.65), transparent);
+  animation: scan 1.5s ease-in-out infinite;
+}
+.scan__mascot {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin: -36px auto 0;
+  animation: bob 1s ease-in-out infinite;
+}
+.scan__title { margin-top: var(--space-4); font-weight: 700; }
+.scan__dots::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+@keyframes scan { from { top: -35%; } to { top: 100%; } }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 
 /* ---------- Review ---------- */
-.review__add .field { max-width: 28rem; }
-.review__input { flex: 1 1 12rem; width: auto; }
-#ingredient-list { display: flex; flex-direction: column; gap: var(--space-2); }
-#ingredient-list .pill-row + .pill-row { margin-top: 0; }
-
-/* Photos with a tappable box over each detected food. One column on phones. */
-.review__photos {
+/* Photos on the left, ingredients on the right; stacked on phones */
+.review {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
-  margin: var(--space-4) 0;
+  align-items: start;
 }
+@media (max-width: 48rem) {
+  .review { grid-template-columns: minmax(0, 1fr); }
+}
+.review__photos-card { padding: var(--space-3); }
+.review__photos { display: grid; gap: var(--space-3); }
 .review__photo { margin: 0; }
+.review__hint { padding: 0.6rem 0.4rem 0; }
+.review__no-photo {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-ink-soft);
+}
+.review__count { margin-left: auto; }
+
+/* Photos with a tappable box over each detected food */
 .photo-boxes {
   position: relative; /* boxes are placed in % of this, which is exactly the photo */
   line-height: 0;
-  border-radius: var(--radius-check);
+  border-radius: var(--radius-tile);
   overflow: hidden;
 }
 .photo-boxes img { display: block; width: 100%; height: auto; }
 .photo-box {
   position: absolute;
   padding: 0;
-  border: 3px solid var(--color-primary);
-  border-radius: var(--radius-check);
-  background: transparent;
-  box-shadow: 0 0 0 1px var(--color-surface); /* stays visible on dark photos */
+  border: 3px solid var(--color-pink);
+  border-radius: 12px;
+  background: rgba(246, 182, 204, 0.12);
+  box-shadow: 0 0 0 1px #fff; /* stays visible on dark photos */
   cursor: pointer;
 }
+/* First time the photos are drawn, the boxes pop in one after another */
+.photo-box--pop {
+  opacity: 0;
+  transform: scale(0.85);
+  animation: boxin 0.4s cubic-bezier(0.3, 1.5, 0.5, 1) forwards;
+}
+@keyframes boxin { to { opacity: 1; transform: none; } }
 .photo-box__label {
   position: absolute;
-  top: 0;
-  left: 0;
-  max-width: 100%;
-  padding: 0 var(--space-1);
-  background: var(--color-primary);
-  color: var(--color-surface);
-  font: 600 var(--text-sm) / 1.5 var(--font-body);
+  top: -2px;
+  left: -2px;
+  max-width: calc(100% + 4px);
+  padding: 0.15rem 0.55rem;
+  background: var(--color-pink);
+  color: var(--color-ink);
+  font: 700 0.8rem / 1.5 var(--font-body);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom-right-radius: var(--radius-check);
+  border-radius: 10px 0 10px 0;
 }
-/* Unchecked: faded and dashed, with the name crossed out (not color alone) */
-.photo-box[aria-pressed="false"] { opacity: 0.45; border-style: dashed; }
-.photo-box[aria-pressed="false"] .photo-box__label { text-decoration: line-through; }
+/* Unchecked: dashed white border, name crossed out (not color alone) */
+.photo-box[aria-pressed="false"] { border-style: dashed; border-color: #fff; background: transparent; }
+.photo-box[aria-pressed="false"] .photo-box__label {
+  background: #fff;
+  color: var(--color-ink-soft);
+  text-decoration: line-through;
+}
 .photo-box:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
 
-/* ---------- Recipes ---------- */
-.recipes__settings { justify-content: space-between; }
-.recipes__title { font-size: var(--text-lg); }
-.recipes__subtitle { font-size: var(--text-base); margin-top: var(--space-3); }
-.card details ul, .card details ol { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
-
-/* Each card keeps its own height when one is opened */
-.recipes__grid { align-items: start; }
-.card summary {
-  cursor: pointer;
-  font-weight: 600;
-  min-height: var(--touch);
-  display: flex;
+/* Ingredients as chips: round check, name, optional "added" tag, remove button */
+.ing-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  border: 2px solid var(--color-line);
+  border-radius: var(--radius-button);
+  background: #fff;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.ing:has(.check__input:checked) { background: var(--color-primary-soft); border-color: var(--color-sky); }
+.ing:has(.check__input:focus-visible) { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.ing .check__input:focus-visible + .check__box { outline: none; }
+.ing__label {
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  list-style: none; /* hide the browser's own marker, we draw an arrow instead */
+  min-height: var(--touch);
+  padding: 0 0.3rem 0 0.5rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ing__label .check__box--round { width: 1.5rem; height: 1.5rem; }
+.ing__name { text-transform: capitalize; }
+.ing:not(:has(.check__input:checked)) .ing__name { color: var(--color-ink-soft); text-decoration: line-through; }
+.ing__tag {
+  padding: 0.05rem 0.45rem;
+  border-radius: var(--radius-button);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.ing .icon-btn { margin-right: 0.25rem; }
+
+/* Add form under the chips */
+.review__add {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-line);
+}
+.review__input { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- Recipes ---------- */
+.recipes__settings { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.recipes__settings .btn { margin-left: auto; }
+
+.r-card {
+  transition: transform 0.2s, box-shadow 0.2s;
+  animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.r-card:hover { transform: translateY(-3px); }
+.r-card__media { position: relative; }
+/* "4/6 in your fridge" badge with a small ring chart */
+.r-card__have {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.3rem;
+  border-radius: var(--radius-button);
+  background: #fff;
+  color: var(--color-ink);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.r-card__have svg { transform: rotate(-90deg); }
+.recipes__title { font-size: 1.2rem; }
+.card__meta { display: flex; flex-wrap: wrap; gap: 0.9rem; }
+.card__meta span { display: inline-flex; align-items: center; gap: 0.3rem; }
+
+/* "You'll also need" box; green when nothing is missing */
+.r-card__need {
+  padding: 0.7rem 0.85rem;
+  border-radius: 16px;
+  background: var(--color-primary-soft);
+  font-size: 0.85rem;
+}
+.r-card__need b { font-weight: 800; }
+.r-card__need--all { background: #e3f3ea; color: #1f6b45; font-weight: 700; }
+.r-card__swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.15rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: var(--radius-button);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+/* Ingredients and steps dropdown */
+.card details { border-top: 1px solid var(--color-line); padding-top: 0.35rem; }
+.card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--touch);
+  color: var(--color-primary);
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none; /* hide the browser's own marker, we draw a chevron instead */
 }
 .card summary::-webkit-details-marker { display: none; }
-.card summary::before { content: "\25B8"; } /* ▸ closed */
-.card details[open] > summary::before { content: "\25BE"; } /* ▾ open */
+.card summary::after {
+  content: "";
+  width: 0.6rem;
+  height: 0.6rem;
+  border-right: 2.5px solid currentColor;
+  border-bottom: 2.5px solid currentColor;
+  transform: rotate(45deg) translateY(-3px);
+  transition: transform 0.2s;
+}
+.card details[open] > summary::after { transform: rotate(-135deg); }
+.recipes__subtitle {
+  margin: 0.6rem 0 0.4rem;
+  color: var(--color-ink-soft);
+  font: 800 0.75rem / 1.3 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.card details ul, .card details ol { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
+/* Ingredients as small chips; the ones you don't have are pink */
+.card details .recipes__ings { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.recipes__ings li { padding: 0.2rem 0.6rem; border-radius: var(--radius-button); background: var(--color-primary-soft); font-size: 0.85rem; }
+.recipes__ings li.recipes__ing--missing { background: var(--color-accent-soft); color: var(--color-accent); font-weight: 700; }
+/* Steps with navy circle numbers */
+.card details .recipes__steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.recipes__steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 1.8rem 1fr;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  font-size: 0.92rem;
+}
+.recipes__steps li::before {
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+}

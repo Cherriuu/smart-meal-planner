@@ -12,17 +12,20 @@
 // buttons and a page refresh work too.
 
 import './wizard.css';
+import logo from './assets/pixel/rolling_pin.png';
 import { getState, checkedIngredients } from './state.js';
+import { icon } from './util.js';
 import { hasSavedPreferences } from './preferences.js';
 import { mountPreferences } from './steps/preferences.js';
 import { mountUpload } from './steps/upload.js';
 import { mountReview } from './steps/review.js';
 import { mountRecipes } from './steps/recipes.js';
 
+// next: what the Next button says on that step (the last step has no Next button)
 const STEPS = [
-  { id: 'preferences', label: 'Preferences', mount: mountPreferences },
-  { id: 'upload', label: 'Upload', mount: mountUpload },
-  { id: 'review', label: 'Review', mount: mountReview },
+  { id: 'preferences', label: 'Preferences', next: 'Next: add photos', mount: mountPreferences },
+  { id: 'upload', label: 'Upload', next: 'Find my ingredients', mount: mountUpload },
+  { id: 'review', label: 'Review', next: 'Find recipes', mount: mountReview },
   { id: 'recipes', label: 'Recipes', mount: mountRecipes },
 ];
 
@@ -50,14 +53,20 @@ function furthestAllowed(index) {
 export function startWizard(app) {
   app.innerHTML = `
     <header class="app-header">
-      <div class="app-header__inner"><span class="app-header__name">Smart Meal Planner</span></div>
+      <div class="app-header__inner">
+        <img class="app-header__logo pixel" src="${logo}" width="48" height="48" alt="">
+        <span class="app-header__name">Smart Meal Planner</span>
+        <span class="app-header__chip">GWC @ UCF</span>
+      </div>
     </header>
     <main class="page wizard">
       <nav aria-label="Progress" id="stepper"></nav>
-      <section class="stack--lg" id="step" aria-labelledby="step-title"></section>
+      <section class="wizard__step" id="step" aria-labelledby="step-title"></section>
       <div class="wizard__nav">
-        <button class="btn btn--secondary" type="button" id="back">Back</button>
-        <button class="btn wizard__next" type="button" id="next">Next</button>
+        <div class="wizard__nav-inner">
+          <button class="btn btn--secondary" type="button" id="back">Back</button>
+          <button class="btn wizard__next" type="button" id="next">Next</button>
+        </div>
       </div>
     </main>
   `;
@@ -77,7 +86,9 @@ export function startWizard(app) {
   function renderStepper() {
     const items = STEPS.map((step, i) => {
       const status = i < current.index ? 'done' : i === current.index ? 'current' : 'todo';
-      const inner = `<span class="stepper__num" aria-hidden="true">${i + 1}</span><span class="stepper__label">${step.label}</span>`;
+      // Finished steps show a check mark instead of their number
+      const mark = status === 'done' ? icon('check', 14, 3.5) : i + 1;
+      const inner = `<span class="stepper__num" aria-hidden="true">${mark}</span><span class="stepper__label">${step.label}</span>`;
       const content = status === 'done'
         ? `<a class="stepper__link" href="${hashFor(i)}">${inner}</a>`
         : `<span class="stepper__link">${inner}</span>`;
@@ -95,10 +106,20 @@ export function startWizard(app) {
     renderStepper();
     backBtn.hidden = index === 0;
     nextBtn.hidden = index === STEPS.length - 1;
+    nextBtn.innerHTML = nextLabel(index);
+    // Replay the gentle rise-in for the new step
+    stepEl.classList.remove('wizard__step--enter');
+    void stepEl.offsetWidth;
+    stepEl.classList.add('wizard__step--enter');
 
     // Tell screen readers where they are, and start at the top
     stepEl.querySelector('#step-title')?.focus({ preventScroll: true });
     window.scrollTo(0, 0);
+  }
+
+  // "Find recipes →" (our own text, no user data)
+  function nextLabel(index) {
+    return `${STEPS[index].next ?? 'Next'} ${icon('arrow', 18, 2.5)}`;
   }
 
   function setBusy(value) {
@@ -108,7 +129,7 @@ export function startWizard(app) {
     nextBtn.disabled = value;
     nextBtn.innerHTML = value
       ? '<span class="spinner spinner--small" aria-hidden="true"></span> Working…'
-      : 'Next';
+      : nextLabel(current.index);
   }
 
   // Runs the current step's check. True means "ok to leave forward".

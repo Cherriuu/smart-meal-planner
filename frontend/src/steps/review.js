@@ -1,55 +1,71 @@
 // Step 3: the user approves (or fixes) the detected ingredients before any recipe search.
 import { getState, addIngredient, removeIngredient } from '../state.js';
-import { escapeHtml } from '../util.js';
+import { escapeHtml, helperHtml, icon } from '../util.js';
 
 export function mountReview(root) {
   const state = getState();
 
   root.innerHTML = `
-    <h1 id="step-title" tabindex="-1">Review ingredients</h1>
-    <p class="text-soft">Uncheck or remove anything that's wrong, and add what we missed. Only checked ingredients are used to find recipes.</p>
-    <div id="photo-boxes"></div>
-    <form class="review__add" id="add-form" novalidate>
-      <div class="field">
-        <label class="field__label" for="new-ingredient">Add an ingredient</label>
-        <div class="row">
+    ${helperHtml('Review ingredients', "Here's what I found! Uncheck anything I got wrong, and add what I missed.", 'happy')}
+    <div class="review">
+      <div class="card section review__photos-card" id="photo-boxes"></div>
+      <div class="card section">
+        <h2 class="section-title">Your ingredients <span class="chip review__count" id="checked-count"></span></h2>
+        <p class="text-soft">Only checked ingredients are used to find recipes.</p>
+        <div class="ing-list" id="ingredient-list"></div>
+        <form class="review__add" id="add-form" novalidate>
+          <label class="visually-hidden" for="new-ingredient">Add an ingredient</label>
           <input class="input review__input" id="new-ingredient" type="text" maxlength="60"
             placeholder="Type an ingredient" autocomplete="off" aria-describedby="add-message">
           <button class="btn" type="submit">Add</button>
-        </div>
+        </form>
         <p class="field__error" id="add-message" aria-live="polite"></p>
+        <p class="field__error" id="review-error" role="alert"></p>
       </div>
-    </form>
-    <div id="ingredient-list"></div>
-    <p class="field__error" id="review-error" role="alert"></p>
+    </div>
   `;
 
   const list = root.querySelector('#ingredient-list');
   const photos = root.querySelector('#photo-boxes');
+  const count = root.querySelector('#checked-count');
   const addInput = root.querySelector('#new-ingredient');
   const addMessage = root.querySelector('#add-message');
   const error = root.querySelector('#review-error');
-  // Draw boxes on the exact (resized, upright) images Gemini saw, so they line up
-  const shownPhotos = state.detectedPhotos.length ? state.detectedPhotos : state.files;
-  const photoUrls = state.detections.length ? shownPhotos.map((file) => URL.createObjectURL(file)) : [];
+  // Draw boxes on the exact (resized, upright) images Gemini saw, so they line up.
+  // After "Add foods by hand" there are none, and the card says so instead.
+  const shownPhotos = state.detectedPhotos.length
+    ? state.detectedPhotos
+    : state.detections.length ? state.files : [];
+  const photoUrls = shownPhotos.map((file) => URL.createObjectURL(file));
+  let firstDraw = true; // boxes pop in one after another only the first time
+
+  function updateCount() {
+    count.textContent = `${state.ingredients.filter((item) => item.checked).length} checked`;
+  }
 
   // Each photo with a button over every detected food. Boxes are on a 0-1000 scale,
   // so dividing by 10 gives percentages that scale with the photo.
   function renderPhotos() {
-    if (!state.detections.length) {
-      photos.innerHTML = '';
+    if (!photoUrls.length) {
+      photos.innerHTML = `
+        <div class="review__no-photo">
+          ${icon('plus', 28)}
+          <p>No photo this time. Type your foods in the list.</p>
+        </div>`;
       return;
     }
     const byName = new Map(state.ingredients.map((item) => [item.name, item]));
-    photos.innerHTML = `<div class="review__photos">${photoUrls
+    let order = 0;
+    const figures = photoUrls
       .map((url, index) => {
         const boxes = state.detections
           .filter((item) => item.photo === index && byName.has(item.name))
           .map(({ name, box }) => {
             const [ymin, xmin, ymax, xmax] = box.map(Number);
-            const style = `left:${xmin / 10}%;top:${ymin / 10}%;width:${(xmax - xmin) / 10}%;height:${(ymax - ymin) / 10}%`;
+            const delay = firstDraw ? `;animation-delay:${order++ * 120}ms` : '';
+            const style = `left:${xmin / 10}%;top:${ymin / 10}%;width:${(xmax - xmin) / 10}%;height:${(ymax - ymin) / 10}%${delay}`;
             return `
-              <button class="photo-box" type="button" data-name="${escapeHtml(name)}" style="${style}"
+              <button class="photo-box${firstDraw ? ' photo-box--pop' : ''}" type="button" data-name="${escapeHtml(name)}" style="${style}"
                 aria-pressed="${byName.get(name).checked}" aria-label="${escapeHtml(name)}">
                 <span class="photo-box__label" aria-hidden="true">${escapeHtml(name)}</span>
               </button>`;
@@ -63,7 +79,10 @@ export function mountReview(root) {
             </div>
           </figure>`;
       })
-      .join('')}</div>`;
+      .join('');
+    const hint = state.detections.length ? '<p class="text-soft review__hint">Tap a box to check or uncheck it.</p>' : '';
+    photos.innerHTML = `<div class="review__photos">${figures}</div>${hint}`;
+    firstDraw = false;
   }
 
   // Keep every box for this food in step with its checkbox (no re-render, so focus stays put)
@@ -84,27 +103,31 @@ export function mountReview(root) {
     const checkbox = list.querySelector(`[data-index="${index}"]`);
     if (checkbox) checkbox.checked = item.checked;
     syncBoxes(item.name);
+    updateCount();
     error.textContent = '';
   });
 
+  // Each ingredient is a chip: round check, name, "added" tag for typed-in foods, remove button
   function renderList() {
+    updateCount();
     if (state.ingredients.length === 0) {
       list.innerHTML = state.noneFound
-        ? `<p class="text-soft">We didn't spot any food in your photos. Add what you have above.</p>`
-        : '<p class="text-soft">No ingredients yet. Add some above.</p>';
+        ? `<p class="text-soft">We didn't spot any food in your photos. Add what you have below.</p>`
+        : '<p class="text-soft">No ingredients yet. Add some below.</p>';
       return;
     }
     list.innerHTML = state.ingredients
       .map(
         (item, index) => `
-        <div class="pill-row">
-          <label class="check">
+        <div class="ing">
+          <label class="ing__label">
             <input class="check__input" type="checkbox" data-index="${index}" ${item.checked ? 'checked' : ''}>
-            <span class="check__box" aria-hidden="true"></span>
-            <span class="check__label">${escapeHtml(item.name)}</span>
+            <span class="check__box check__box--round" aria-hidden="true"></span>
+            <span class="ing__name">${escapeHtml(item.name)}</span>
+            ${item.manual ? '<span class="ing__tag">added</span>' : ''}
           </label>
-          <button class="btn btn--ghost btn--small" type="button" data-remove="${index}"
-            aria-label="Remove ${escapeHtml(item.name)}">Remove</button>
+          <button class="icon-btn" type="button" data-remove="${index}"
+            aria-label="Remove ${escapeHtml(item.name)}">${icon('close', 14, 2.5)}</button>
         </div>`
       )
       .join('');
@@ -116,6 +139,7 @@ export function mountReview(root) {
     const item = state.ingredients[Number(box.dataset.index)];
     item.checked = box.checked;
     syncBoxes(item.name);
+    updateCount();
     error.textContent = '';
   });
 

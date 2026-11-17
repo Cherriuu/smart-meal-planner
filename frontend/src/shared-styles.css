@@ -1,28 +1,31 @@
 /* ==========================================================
-   Smart Meal Planner - shared styles (issue #4)
+   Smart Meal Planner - shared styles (issue #4, redesign)
    1. Tokens   2. Base   3. Layout   4. Buttons
-   5. Cards    6. Checkboxes (+ pill rows)   7. Spinner
+   5. Cards and sections   6. Checkboxes (+ pills and pill rows)
+   7. Fields   8. Mascot helper   9. Spinner   10. Motion
    Change colors and fonts ONLY in the tokens section.
    ========================================================== */
 
 /* ---------- 1. Tokens: shared colors and fonts ---------- */
 :root {
-  /* Colors */
-  /* Navy colors are from Figma. Background is still an estimate: check it in Figma */
+  /* Colors. Navy values are from Figma; the pinks and extra blues are from the redesign. */
   --color-bg: #d3e1f2;            /* page background (light blue) */
-  --color-surface: #ffffff;       /* cards, input pills */
-  --color-ink: #092946;           /* main text (dark navy) - from Figma */
+  --color-bg-top: #e9f1fb;        /* lighter top of the page */
+  --color-surface: #ffffff;       /* cards, inputs */
+  --color-ink: #092946;           /* main text (dark navy) */
   --color-ink-soft: #4a5e7e;      /* secondary text */
-  --color-line: #b3c6e0;          /* borders */
-  --color-primary: #134f85;       /* navy: main buttons, checks - from Figma */
+  --color-line: #c9d8ec;          /* borders */
+  --color-primary: #134f85;       /* navy: main buttons, checks */
   --color-primary-strong: #0d3a64;
   --color-primary-soft: #e6eef8;
-  --color-accent: #b5305b;        /* red: delete / important */
-  --color-accent-soft: #f8e1e8;
+  --color-sky: #8fb8e6;           /* soft blue for highlights */
+  --color-accent: #b5305b;        /* pink-red: selected, delete, important */
+  --color-accent-soft: #fbe3ec;
+  --color-pink: #f6b6cc;          /* cute highlight pink */
   --color-focus: #092946;         /* keyboard focus ring */
 
-  /* Fonts (add the Google Fonts link in your HTML <head>) */
-  --font-display: "Holtwood One SC", Georgia, serif; /* heading font from Figma */
+  /* Fonts (the Google Fonts link is in index.html) */
+  --font-display: "Holtwood One SC", Georgia, serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   /* Type scale */
@@ -42,10 +45,11 @@
   --space-7: 3rem;
 
   /* Shape */
-  --radius-check: 6px;
-  --radius-button: 999px; /* pill shape, like the sketches */
-  --radius-card: 24px;
-  --shadow-card: none; /* sketches are flat */
+  --radius-check: 8px;
+  --radius-button: 999px; /* pill shape */
+  --radius-card: 28px;
+  --radius-tile: 20px;
+  --shadow-card: 0 1px 0 rgba(9, 41, 70, 0.04), 0 10px 30px -18px rgba(9, 41, 70, 0.35);
 
   /* Page gutter: 1rem on phones, up to 2rem on laptops */
   --gutter: clamp(1rem, 4vw, 2rem);
@@ -62,12 +66,19 @@
 body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--color-bg);
+  /* White polka dots over a light-blue gradient */
+  background:
+    radial-gradient(rgba(255, 255, 255, 0.85) 1.3px, transparent 1.6px) 0 0 / 24px 24px,
+    linear-gradient(180deg, var(--color-bg-top) 0, var(--color-bg) 520px) fixed;
+  background-color: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-body);
   font-size: var(--text-base);
   line-height: 1.55;
 }
+
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
 
 /* Headings: Holtwood One SC already shows small capitals, so no text-transform */
 h1, h2, h3 {
@@ -85,6 +96,9 @@ img, svg { max-width: 100%; display: block; }
 
 a { color: var(--color-primary); }
 
+/* Pixel art: crisp squares, only ever shown at whole-number scales */
+.pixel { image-rendering: pixelated; }
+
 /* Keyboard focus: always visible */
 :focus-visible {
   outline: 3px solid var(--color-focus);
@@ -100,34 +114,49 @@ a { color: var(--color-primary); }
   white-space: nowrap;
 }
 
-.text-soft { color: var(--color-ink-soft); font-size: var(--text-sm); }
+.text-soft { color: var(--color-ink-soft); font-size: 0.9rem; }
 
 /* ---------- 3. Layout: stretches to fit any screen ---------- */
 
-/* Centered page column. Never wider than 72rem, never touches screen edges. */
+/* Centered page column. Bottom padding keeps content clear of the fixed Back/Next bar. */
 .page {
-  width: min(100% - 2 * var(--gutter), 72rem);
+  width: min(100% - 2 * var(--gutter), 64rem);
   margin-inline: auto;
-  padding-block: var(--space-5) var(--space-7);
+  padding-block: var(--space-5) 8rem;
 }
 
-/* Top bar */
+/* Top bar: sticky, see-through white */
 .app-header {
-  background: var(--color-surface);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(255, 255, 255, 0.75);
   border-bottom: 1px solid var(--color-line);
+  backdrop-filter: blur(6px);
 }
 .app-header__inner {
-  width: min(100% - 2 * var(--gutter), 72rem);
+  width: min(100% - 2 * var(--gutter), 64rem);
   margin-inline: auto;
-  min-height: 3.5rem;
+  min-height: 4rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
+.app-header__logo { flex: none; width: 48px; height: 48px; }
 .app-header__name {
   font-family: var(--font-display);
   font-size: var(--text-lg);
+  letter-spacing: 0.01em;
+}
+.app-header__chip {
+  margin-left: auto;
+  padding: 0.35rem 0.8rem;
+  border-radius: var(--radius-button);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 /* Vertical spacing between children */
@@ -142,11 +171,22 @@ a { color: var(--color-primary); }
   gap: var(--space-3);
 }
 
-/* Cards in a grid: 1 column on phones, 2-4 on bigger screens */
+/* Cards in a grid: 1 column on phones, 2-3 on bigger screens */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
-  gap: var(--space-5);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: 1.1rem;
+  align-items: start;
+}
+
+/* Two cards side by side, stacked on phones */
+.two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@media (max-width: 48rem) {
+  .two { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---------- 4. Buttons ---------- */
@@ -164,10 +204,10 @@ a { color: var(--color-primary); }
   font: 700 var(--text-base) / 1 var(--font-body);
   text-decoration: none;
   cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.1s;
 }
 .btn:hover { background: var(--color-primary-strong); border-color: var(--color-primary-strong); }
-.btn:active { transform: translateY(1px); }
+.btn:active { transform: scale(0.97); }
 
 .btn--secondary {
   background: var(--color-surface);
@@ -202,7 +242,33 @@ a { color: var(--color-primary); }
   transform: none;
 }
 
-/* ---------- 5. Cards ---------- */
+/* A button that looks like a link ("Add foods by hand") */
+.link-btn {
+  min-height: var(--touch);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Round icon button (remove a photo or an ingredient) */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--color-ink-soft);
+}
+.icon-btn:hover { background: var(--color-accent-soft); color: var(--color-accent); }
+
+/* ---------- 5. Cards and sections ---------- */
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
@@ -213,24 +279,61 @@ a { color: var(--color-primary); }
   flex-direction: column;
 }
 .card__image {
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 16 / 10;
   width: 100%;
   object-fit: cover;
   background: var(--color-primary-soft);
 }
 .card__body {
-  padding: var(--space-4) var(--space-5) var(--space-5);
+  padding: 1.1rem 1.25rem 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 0.65rem;
   flex: 1;
 }
-.card__meta { color: var(--color-ink-soft); font-size: var(--text-sm); }
+.card__meta { color: var(--color-ink-soft); font-size: 0.85rem; font-weight: 600; }
 .card__actions { margin-top: auto; padding-top: var(--space-2); }
 
-/* A card that is a link (recipe list -> recipe page) */
+/* A card that is a link */
 a.card { color: inherit; text-decoration: none; }
 a.card:hover { border-color: var(--color-primary); }
+
+/* A card with padding, used for each part of a step */
+.section { padding: var(--space-5); }
+.section + .section { margin-top: var(--space-4); }
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: var(--space-1);
+  font: 800 1.1rem / 1.3 var(--font-body);
+}
+.section > .text-soft { margin-bottom: var(--space-4); }
+/* Pink number badge in a section title */
+.badge-n {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: 0.8rem;
+}
+
+/* Small white label ("2 servings", "4 checked") */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-button);
+  background: var(--color-surface);
+  font-size: 0.85rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 /* ---------- 6. Checkboxes ---------- */
 /* Markup:
@@ -239,6 +342,7 @@ a.card:hover { border-color: var(--color-primary); }
      <span class="check__box" aria-hidden="true"></span>
      <span class="check__label">2 cups rice</span>
    </label>
+   Add check__box--round for the round checks on tiles, pills and ingredient chips.
 */
 .check {
   display: flex;
@@ -262,13 +366,20 @@ a.card:hover { border-color: var(--color-primary); }
   background: var(--color-surface);
   display: grid;
   place-items: center;
-  transition: background-color 0.15s, border-color 0.15s;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.2s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.check__box--round {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-color: var(--color-line);
+  border-radius: 50%;
 }
 /* The check mark */
 .check__box::after {
   content: "";
   width: 0.35rem;
   height: 0.7rem;
+  margin-top: -0.15rem;
   border: solid #fff;
   border-width: 0 3px 3px 0;
   transform: rotate(45deg) scale(0);
@@ -291,8 +402,7 @@ a.card:hover { border-color: var(--color-primary); }
 }
 .check__input:disabled ~ * { opacity: 0.5; cursor: not-allowed; }
 
-/* White pill row for list items, like each ingredient in "Your ingredients".
-   Put a .check on the left and an optional small button on the right. */
+/* White pill row for list items. Put a .check on the left and an optional small button on the right. */
 .pill-row {
   display: flex;
   align-items: center;
@@ -305,7 +415,107 @@ a.card:hover { border-color: var(--color-primary); }
 }
 .pill-row + .pill-row { margin-top: var(--space-2); }
 
-/* ---------- 7. Loading spinner ---------- */
+/* Pill toggle (High-protein, Low-sugar): a label around a hidden checkbox and a round check.
+   Selected = pink-soft fill, pink border and a filled pink check. */
+.pills { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch);
+  padding: 0 1.1rem 0 0.55rem;
+  border: 2px solid var(--color-line);
+  border-radius: var(--radius-button);
+  background: var(--color-surface);
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.pill:hover { border-color: var(--color-sky); }
+.pill:has(.check__input:checked) { background: var(--color-accent-soft); border-color: var(--color-pink); }
+.pill .check__input:checked + .check__box { background: var(--color-accent); border-color: var(--color-accent); }
+.pill:has(.check__input:focus-visible) { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.pill .check__input:focus-visible + .check__box { outline: none; }
+
+/* ---------- 7. Fields ---------- */
+/* A label, an input and its error message */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.field__label { font-weight: 700; }
+.field__label-soft { font-weight: 500; color: var(--color-ink-soft); }
+
+/* Pill input with a soft blue fill; white with a navy border while typing */
+.input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 1.1rem;
+  border: 2px solid var(--color-line);
+  border-radius: var(--radius-button);
+  background: var(--color-primary-soft);
+  color: var(--color-ink);
+  font: inherit;
+  font-weight: 600;
+}
+.input:focus { outline: none; border-color: var(--color-primary); background: #fff; }
+.input:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.input[aria-invalid="true"] { border-color: var(--color-accent); }
+
+.field__error {
+  margin: 0;
+  color: var(--color-accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.field__error:empty { display: none; }
+
+/* ---------- 8. Mascot helper (top of every step) ---------- */
+/* The mascot next to a speech bubble with the step title and one friendly line */
+.helper {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.9rem;
+}
+.mascot {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  filter: drop-shadow(0 6px 8px rgba(9, 41, 70, 0.18));
+  animation: bob 3s ease-in-out infinite;
+}
+.mascot img { width: 96px; height: 96px; }
+.bubble {
+  position: relative;
+  max-width: 34rem;
+  padding: 0.9rem 1.2rem;
+  border-radius: 22px 22px 22px 6px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+.bubble h1 { font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.2rem); color: var(--color-ink); }
+.bubble p { margin-top: 0.3rem; color: var(--color-ink-soft); }
+/* Two pixel sparkles beside the title, bobbing out of step with each other */
+.title-row { display: flex; align-items: center; gap: 0.35rem; }
+.stars { position: relative; flex: none; width: 52px; height: 56px; margin-top: -6px; }
+.star { position: absolute; width: 32px; height: 32px; animation: bob 3s ease-in-out infinite; }
+.star--up { top: 2px; right: 2px; animation-delay: -1.5s; }
+.star--down { bottom: 0; left: 0; }
+
+/* Phones: smaller mascot (still an exact 2x) and title, and the bubble may shrink to fit */
+@media (max-width: 30rem) {
+  .mascot, .mascot img { width: 64px; height: 64px; }
+  .bubble { flex: 1 1 auto; min-width: 0; padding: 0.8rem 1rem; }
+  .bubble h1 { font-size: 1.3rem; min-width: 0; overflow-wrap: break-word; }
+  .title-row { justify-content: space-between; }
+  .app-header__name { font-size: 1.05rem; }
+}
+
+@keyframes bob { 50% { transform: translateY(-4px); } }
+
+/* ---------- 9. Loading spinner ---------- */
 /* Markup: <span class="spinner" role="status"><span class="visually-hidden">Loading</span></span> */
 .spinner {
   display: inline-block;
@@ -323,8 +533,14 @@ a.card:hover { border-color: var(--color-primary); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Respect "reduce motion": keep the spinner, but slower and calmer */
+/* ---------- 10. Motion ---------- */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: scale(0.8); } }
+@keyframes fade { from { opacity: 0; } }
+
+/* "Reduce motion": no animations or transitions. The spinner keeps turning, slowly,
+   because it is the only sign that something is still loading. */
 @media (prefers-reduced-motion: reduce) {
-  .spinner { animation-duration: 2.4s; }
-  .btn, .check__box, .check__box::after { transition: none; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .spinner { animation: spin 2.4s linear infinite !important; }
 }

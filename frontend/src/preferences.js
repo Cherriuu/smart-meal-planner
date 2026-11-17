@@ -3,11 +3,33 @@
 // Choices are saved in the browser, so they are still there after a refresh.
 
 import './preferences.css';
+import ovenIcon from './assets/pixel/oven.png';
+import microwaveIcon from './assets/pixel/microwave.png';
+import airFryerIcon from './assets/pixel/air_fryer.png';
+import stovetopIcon from './assets/pixel/stovetop.png';
+import toasterIcon from './assets/pixel/toaster.png';
+import { helperHtml } from './util.js';
 
 const STORAGE_KEY = 'smartMealPlanner.preferences';
 
 const APPLIANCES = ['Oven', 'Microwave', 'Air fryer', 'Stovetop', 'Toaster'];
+const APPLIANCE_ICONS = {
+  Oven: ovenIcon,
+  Microwave: microwaveIcon,
+  'Air fryer': airFryerIcon,
+  Stovetop: stovetopIcon,
+  Toaster: toasterIcon,
+};
 const OCCASIONS = ['Casual', 'Family dinner', 'Birthday', 'Potluck', 'Holiday'];
+const OCCASION_NOTES = {
+  Casual: 'Everyday cooking',
+  'Family dinner': 'Feeds everyone',
+  Birthday: 'Something special',
+  Potluck: 'Easy to share',
+  Holiday: 'Big and cozy',
+};
+// Quick picks under "Max calories" ('' = no limit)
+const CALORIE_CHOICES = ['', 500, 800, 1200];
 
 // Allowed ranges. Anything outside is an "impossible value" and is blocked.
 const LIMITS = {
@@ -61,81 +83,100 @@ function checkNumber(input, { label, min, max }, required) {
 export function renderPreferences(root, { embedded = false, onSubmit } = {}) {
   const prefs = getPreferences();
 
-  const appliancePills = APPLIANCES.map(
+  // Appliance tiles: pixel icon, then a round check and the name. The real checkbox
+  // is inside the label, so FormData in save() still finds every checked appliance.
+  const applianceTiles = APPLIANCES.map(
     (name) => `
-      <div class="pill-row">
-        <label class="check">
+      <label class="tile">
+        <img class="tile__icon pixel" src="${APPLIANCE_ICONS[name]}" width="48" height="48" alt="">
+        <span class="tile__row">
           <input class="check__input" type="checkbox" name="appliance" value="${name}"
             ${prefs.appliances.includes(name) ? 'checked' : ''}>
-          <span class="check__box" aria-hidden="true"></span>
-          <span class="check__label">${name}</span>
-        </label>
-      </div>`
+          <span class="check__box check__box--round" aria-hidden="true"></span>
+          <span>${name}</span>
+        </span>
+      </label>`
   ).join('');
 
-  const occasionOptions = OCCASIONS.map(
-    (name) => `<option ${name === prefs.occasion ? 'selected' : ''}>${name}</option>`
+  // Occasion tiles are radio buttons with the same name, so form.elements.occasion.value still works.
+  // One is always checked (like the old <select>), even if an old saved value isn't in the list.
+  const occasion = OCCASIONS.includes(prefs.occasion) ? prefs.occasion : DEFAULTS.occasion;
+  const occasionTiles = OCCASIONS.map(
+    (name) => `
+      <label class="tile">
+        <span class="tile__row">
+          <input class="check__input" type="radio" name="occasion" value="${name}"
+            ${name === occasion ? 'checked' : ''}>
+          <span class="check__box check__box--round" aria-hidden="true"></span>
+          <span>${name}<small class="tile__note">${OCCASION_NOTES[name]}</small></span>
+        </span>
+      </label>`
   ).join('');
+
+  const calorieChips = CALORIE_CHOICES.map(
+    (value) => `<button class="prefs__chip" type="button" data-calories="${value}"
+      aria-pressed="${String(prefs.maxCalories) === String(value)}">${value ? `${value} cal` : 'No limit'}</button>`
+  ).join('');
+
+  const healthPill = (name, label) => `
+    <label class="pill">
+      <input class="check__input" type="checkbox" name="${name}" ${prefs[name] ? 'checked' : ''}>
+      <span class="check__box check__box--round" aria-hidden="true"></span>
+      <span>${label}</span>
+    </label>`;
 
   const content = `
-      <h1 id="step-title" tabindex="-1">Your preferences</h1>
+      ${helperHtml('Your preferences', "Tell me what you can cook with and who you're cooking for.")}
 
       <form class="prefs" id="prefs-form" novalidate>
-        <section class="prefs__section">
-          <h2 class="prefs__title">Appliances</h2>
+        <section class="card section" aria-labelledby="prefs-appliances">
+          <h2 class="section-title" id="prefs-appliances"><span class="badge-n" aria-hidden="true">1</span>Appliances</h2>
           <p class="text-soft">Pick everything you can cook with.</p>
-          <div class="prefs__grid">${appliancePills}</div>
+          <div class="tiles">${applianceTiles}</div>
         </section>
 
-        <section class="prefs__section">
-          <h2 class="prefs__title">Limits</h2>
-          <div class="field">
-            <label class="field__label" for="maxCalories">Max calories</label>
-            <input class="input" id="maxCalories" name="maxCalories" type="number"
-              inputmode="numeric" min="${LIMITS.calories.min}" max="${LIMITS.calories.max}"
-              placeholder="No limit" value="${prefs.maxCalories}"
-              aria-describedby="maxCalories-error">
-            <p class="field__error" id="maxCalories-error" aria-live="polite"></p>
-          </div>
-
-          <div class="field">
-            <label class="field__label" for="servings">Number of servings</label>
-            <input class="input" id="servings" name="servings" type="number"
-              inputmode="numeric" min="${LIMITS.servings.min}" max="${LIMITS.servings.max}"
-              value="${prefs.servings}" aria-describedby="servings-error">
-            <p class="field__error" id="servings-error" aria-live="polite"></p>
-          </div>
+        <section class="card section" aria-labelledby="prefs-occasion">
+          <h2 class="section-title" id="prefs-occasion"><span class="badge-n" aria-hidden="true">2</span>Occasion</h2>
+          <p class="text-soft" id="occasion-hint">What are you cooking for?</p>
+          <div class="tiles" role="radiogroup" aria-labelledby="prefs-occasion" aria-describedby="occasion-hint">${occasionTiles}</div>
         </section>
 
-        <section class="prefs__section">
-          <h2 class="prefs__title">Healthy options</h2>
-          <div class="prefs__grid">
-            <div class="pill-row">
-              <label class="check">
-                <input class="check__input" type="checkbox" name="highProtein"
-                  ${prefs.highProtein ? 'checked' : ''}>
-                <span class="check__box" aria-hidden="true"></span>
-                <span class="check__label">High-protein</span>
-              </label>
+        <div class="two">
+          <section class="card section" aria-labelledby="prefs-limits">
+            <h2 class="section-title" id="prefs-limits"><span class="badge-n" aria-hidden="true">3</span>Limits</h2>
+            <div class="field prefs__field">
+              <label class="field__label" for="maxCalories">Max calories <span class="field__label-soft">per serving</span></label>
+              <input class="input" id="maxCalories" name="maxCalories" type="number"
+                inputmode="numeric" min="${LIMITS.calories.min}" max="${LIMITS.calories.max}"
+                placeholder="No limit" value="${prefs.maxCalories}"
+                aria-describedby="maxCalories-hint maxCalories-error">
+              <div class="prefs__chips" role="group" aria-label="Quick calorie limits">${calorieChips}</div>
+              <p class="text-soft" id="maxCalories-hint">Counted for one serving, not the whole recipe.</p>
+              <p class="field__error" id="maxCalories-error" aria-live="polite"></p>
             </div>
-            <div class="pill-row">
-              <label class="check">
-                <input class="check__input" type="checkbox" name="lowSugar"
-                  ${prefs.lowSugar ? 'checked' : ''}>
-                <span class="check__box" aria-hidden="true"></span>
-                <span class="check__label">Low-sugar</span>
-              </label>
-            </div>
-          </div>
-        </section>
 
-        <section class="prefs__section">
-          <h2 class="prefs__title">Occasion</h2>
-          <div class="field">
-            <label class="field__label" for="occasion">What are you cooking for?</label>
-            <select class="input" id="occasion" name="occasion">${occasionOptions}</select>
-          </div>
-        </section>
+            <div class="field prefs__field">
+              <label class="field__label" for="servings">Number of servings</label>
+              <div class="prefs__servings">
+                <button class="prefs__step" type="button" data-servings-step="-1" aria-label="Fewer servings">−</button>
+                <input class="input prefs__servings-input" id="servings" name="servings" type="number"
+                  inputmode="numeric" min="${LIMITS.servings.min}" max="${LIMITS.servings.max}"
+                  value="${prefs.servings}" aria-describedby="servings-error">
+                <button class="prefs__step" type="button" data-servings-step="1" aria-label="More servings">+</button>
+              </div>
+              <p class="field__error" id="servings-error" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <section class="card section" aria-labelledby="prefs-health">
+            <h2 class="section-title" id="prefs-health"><span class="badge-n" aria-hidden="true">4</span>Healthy options</h2>
+            <p class="text-soft">Optional. We'll only show recipes that fit.</p>
+            <div class="pills">
+              ${healthPill('highProtein', 'High-protein')}
+              ${healthPill('lowSugar', 'Low-sugar')}
+            </div>
+          </section>
+        </div>
 
         <div class="row">
           ${embedded ? '' : '<button class="btn" type="submit">Save preferences</button>'}
@@ -165,11 +206,41 @@ export function renderPreferences(root, { embedded = false, onSubmit } = {}) {
     });
   }
 
-  calories.addEventListener('input', () => validate(calories, LIMITS.calories, false));
+  // Light up the quick-pick chip that matches what's typed
+  const chips = root.querySelectorAll('[data-calories]');
+  function syncCalorieChips() {
+    for (const chip of chips) chip.setAttribute('aria-pressed', String(chip.dataset.calories === calories.value));
+  }
+
+  calories.addEventListener('input', () => {
+    validate(calories, LIMITS.calories, false);
+    syncCalorieChips();
+  });
   servings.addEventListener('input', () => validate(servings, LIMITS.servings, true));
   form.addEventListener('input', () => {
     status.textContent = '';
   });
+
+  // Quick picks fill the calorie box, then check it like typing would
+  for (const chip of chips) {
+    chip.addEventListener('click', () => {
+      calories.value = chip.dataset.calories;
+      validate(calories, LIMITS.calories, false);
+      syncCalorieChips();
+      status.textContent = '';
+    });
+  }
+
+  // − and + change servings by one, kept between 1 and 20
+  for (const button of root.querySelectorAll('[data-servings-step]')) {
+    button.addEventListener('click', () => {
+      const { min, max } = LIMITS.servings;
+      const current = Number.isInteger(Number(servings.value)) && servings.value !== '' ? Number(servings.value) : DEFAULTS.servings;
+      servings.value = Math.min(max, Math.max(min, current + Number(button.dataset.servingsStep)));
+      validate(servings, LIMITS.servings, true);
+      status.textContent = '';
+    });
+  }
 
   // Validates, then stores the choices. Returns true when they were saved.
   function save() {

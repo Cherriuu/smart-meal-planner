@@ -2,7 +2,7 @@
 import { getState, checkedIngredients } from '../state.js';
 import { getPreferences } from '../preferences.js';
 import { getRecipes, getSwaps } from '../api/client.js';
-import { escapeHtml, friendlyError, formatAmount } from '../util.js';
+import { escapeHtml, friendlyError, formatAmount, helperHtml, icon } from '../util.js';
 
 function buildRequest() {
   const prefs = getPreferences();
@@ -17,23 +17,40 @@ function buildRequest() {
   };
 }
 
-// "You'll also need: basil (or use your spinach), feta cheese" as plain text ('' if nothing's missing)
-function missingText(recipe) {
-  if (!recipe.missingIngredients?.length) return '';
+// Inside of the "You'll also need" box: each missing food in bold, and a pink
+// "use your spinach" tag after it when a smart swap arrived. Every name is escaped.
+function needHtml(recipe) {
   const swaps = recipe.swaps ?? {};
-  const items = recipe.missingIngredients.map((name) => (swaps[name] ? `${name} (or use your ${swaps[name]})` : name));
+  const items = recipe.missingIngredients.map((name) => {
+    const swap = swaps[name]
+      ? ` <span class="r-card__swap">${icon('swap', 12, 2.5)}<span class="visually-hidden">or </span>use your ${escapeHtml(swaps[name])}</span>`
+      : '';
+    return `<b>${escapeHtml(name)}</b>${swap}`;
+  });
   return `You'll also need: ${items.join(', ')}`;
 }
 
-// "Holiday · 2 servings · up to 2000 cal · High protein"
-function settingsSummary(prefs) {
+// The settings as short chips: "Holiday", "2 servings", "up to 2000 cal", "High protein"
+function settingsParts(prefs) {
   return [
     prefs.occasion,
     `${prefs.servings} ${prefs.servings === 1 ? 'serving' : 'servings'}`,
     prefs.maxCalories !== '' ? `up to ${prefs.maxCalories} cal` : null,
     prefs.highProtein ? 'High protein' : null,
     prefs.lowSugar ? 'Low sugar' : null,
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean);
+}
+
+// Small ring chart for "4/6 in your fridge" (green when you have everything)
+function ringSvg(have, total) {
+  const circumference = 2 * Math.PI * 9;
+  const share = total ? have / total : 1;
+  const color = share === 1 ? '#2e8b57' : 'var(--color-primary)';
+  return `<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" fill="none" stroke="var(--color-primary-soft)" stroke-width="3.5"/>
+    <circle cx="12" cy="12" r="9" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round"
+      stroke-dasharray="${circumference * share} ${circumference}"/>
+  </svg>`;
 }
 
 // Ideas for when nothing matched, based on the current settings.
@@ -49,35 +66,48 @@ function suggestionsFor(prefs) {
   return tips;
 }
 
-function recipeCard(recipe) {
+function recipeCard(recipe, index) {
+  const missingNames = recipe.missingIngredients ?? [];
   const meta = [
-    recipe.readyInMinutes != null ? `${recipe.readyInMinutes} min` : null,
-    recipe.calories != null ? `${recipe.calories} cal/serving` : null,
-    recipe.servings != null ? `${recipe.servings} servings` : null,
-  ].filter(Boolean).join(' · ');
-  const missing = missingText(recipe)
-    ? `<p class="text-soft" data-missing>${escapeHtml(missingText(recipe))}</p>`
-    : '';
+    recipe.readyInMinutes != null ? `${icon('clock', 15)}${escapeHtml(recipe.readyInMinutes)} min` : null,
+    recipe.calories != null ? `${icon('flame', 15)}${escapeHtml(recipe.calories)} cal / serving` : null,
+    recipe.servings != null ? `${icon('person', 15)}${escapeHtml(recipe.servings)} servings` : null,
+  ].filter(Boolean).map((part) => `<span>${part}</span>`).join('');
+
+  // "X/Y in your fridge": Y = all ingredients, X = the ones not missing
+  const total = recipe.ingredients.length;
+  const have = Math.max(0, total - missingNames.length);
+  const badge = total ? `<span class="r-card__have">${ringSvg(have, total)}${have}/${total} in your fridge</span>` : '';
+
+  const need = missingNames.length
+    ? `<div class="r-card__need" data-missing>${needHtml(recipe)}</div>`
+    : '<div class="r-card__need r-card__need--all">You have everything for this one!</div>';
 
   const ingredients = recipe.ingredients
-    .map((i) => `<li>${escapeHtml([formatAmount(i.amount), i.unit, i.name].filter((part) => part !== '' && part != null).join(' '))}</li>`)
+    .map((i) => {
+      const text = [formatAmount(i.amount), i.unit, i.name].filter((part) => part !== '' && part != null).join(' ');
+      return `<li${missingNames.includes(i.name) ? ' class="recipes__ing--missing"' : ''}>${escapeHtml(text)}</li>`;
+    })
     .join('');
-  const steps = recipe.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
+  const steps = recipe.steps.map((step) => `<li><span>${escapeHtml(step)}</span></li>`).join('');
   const equipment = (recipe.appliances ?? []).map((name) => `<li>${escapeHtml(name)}</li>`).join('');
 
   return `
-    <article class="card" data-recipe-id="${escapeHtml(recipe.id)}">
-      ${recipe.image ? `<img class="card__image" src="${escapeHtml(recipe.image)}" alt="">` : ''}
+    <article class="card r-card" data-recipe-id="${escapeHtml(recipe.id)}" style="animation-delay:${index * 60}ms">
+      <div class="r-card__media">
+        ${recipe.image ? `<img class="card__image" src="${escapeHtml(recipe.image)}" alt="">` : '<div class="card__image" aria-hidden="true"></div>'}
+        ${badge}
+      </div>
       <div class="card__body">
         <h2 class="recipes__title">${escapeHtml(recipe.title)}</h2>
-        <p class="card__meta">${escapeHtml(meta)}</p>
-        ${missing}
+        <p class="card__meta">${meta}</p>
+        ${need}
         <details>
           <summary>Ingredients and steps</summary>
           <h3 class="recipes__subtitle">Ingredients</h3>
-          <ul>${ingredients}</ul>
+          <ul class="recipes__ings">${ingredients}</ul>
           <h3 class="recipes__subtitle">Steps</h3>
-          <ol>${steps}</ol>
+          <ol class="recipes__steps">${steps}</ol>
           ${equipment ? `<h3 class="recipes__subtitle">Equipment</h3><ul>${equipment}</ul>` : ''}
         </details>
       </div>
@@ -88,16 +118,19 @@ export function mountRecipes(root) {
   const state = getState();
   let active = true; // false once the user leaves this step
 
+  const settingChips = settingsParts(getPreferences())
+    .map((part) => `<span class="chip">${escapeHtml(part)}</span>`)
+    .join('');
   root.innerHTML = `
-    <h1 id="step-title" tabindex="-1">Recipes</h1>
-    <div class="row recipes__settings">
-      <p class="text-soft" id="settings-summary"></p>
+    ${helperHtml('Recipes', "Yay! Here's what you can make. Ones you have the most for are first.", 'happy')}
+    <div class="recipes__settings" id="settings-summary">
+      <span class="visually-hidden">Your settings:</span>
+      ${settingChips}
       <button class="btn btn--secondary btn--small" type="button" data-edit-prefs>Edit preferences</button>
     </div>
     <div id="recipes-body" aria-live="polite"></div>
   `;
   const body = root.querySelector('#recipes-body');
-  root.querySelector('#settings-summary').textContent = settingsSummary(getPreferences());
 
   // Same as clicking "Preferences" in the step bar: the wizard listens for the URL change.
   // root is shared by every step, so unmount() removes this again.
@@ -147,7 +180,7 @@ export function mountRecipes(root) {
     for (const recipe of needSwaps) {
       if (!Object.keys(recipe.swaps).length) continue; // text unchanged, don't re-announce it
       const line = document.querySelector(`#recipes-body [data-recipe-id="${CSS.escape(String(recipe.id))}"] [data-missing]`);
-      if (line) line.textContent = missingText(recipe);
+      if (line) line.innerHTML = needHtml(recipe); // names are escaped inside needHtml
     }
   }
 
