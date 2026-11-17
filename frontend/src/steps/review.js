@@ -89,7 +89,9 @@ export function mountReview(root) {
 
   function renderList() {
     if (state.ingredients.length === 0) {
-      list.innerHTML = '<p class="text-soft">No ingredients yet. Add some above.</p>';
+      list.innerHTML = state.noneFound
+        ? `<p class="text-soft">We didn't spot any food in your photos. Add what you have above.</p>`
+        : '<p class="text-soft">No ingredients yet. Add some above.</p>';
       return;
     }
     list.innerHTML = state.ingredients

@@ -1,11 +1,12 @@
 // Step 2: pick photos. Pressing Next sends them to the backend to find ingredients.
-import { addFiles, removeFile, getState, filesSignature, applyDetected } from '../state.js';
+import { addFiles, removeFile, getState, filesSignature, applyDetected, startManually } from '../state.js';
 import { detectIngredients } from '../api/client.js';
 import { escapeHtml, friendlyError, resizePhoto } from '../util.js';
 
-export function mountUpload(root) {
+export function mountUpload(root, { next } = {}) {
   const state = getState();
   const previewUrls = new Map(); // File -> temporary URL for its thumbnail
+  let manual = false; // the user chose "Add foods by hand": Next must not try detection again
 
   root.innerHTML = `
     <h1 id="step-title" tabindex="-1">Upload photos</h1>
@@ -16,6 +17,9 @@ export function mountUpload(root) {
         <label class="btn btn--secondary" for="photos">Choose photos</label>
       </div>
       <p class="field__error" id="upload-error" role="alert"></p>
+      <div id="upload-fallback" hidden>
+        <button class="btn btn--secondary" type="button" id="add-by-hand">Add foods by hand</button>
+      </div>
       <ul class="upload__list" id="upload-list"></ul>
     </div>
   `;
@@ -23,6 +27,7 @@ export function mountUpload(root) {
   const input = root.querySelector('#photos');
   const list = root.querySelector('#upload-list');
   const error = root.querySelector('#upload-error');
+  const fallback = root.querySelector('#upload-fallback');
 
   function previewUrl(file) {
     if (!previewUrls.has(file)) previewUrls.set(file, URL.createObjectURL(file));
@@ -66,11 +71,20 @@ export function mountUpload(root) {
     input.focus();
   });
 
+  // Detection failed: let the user carry on without it (the Review step has the "Add an ingredient" form)
+  root.querySelector('#add-by-hand').addEventListener('click', () => {
+    startManually();
+    manual = true;
+    next?.();
+  });
+
   renderList(); // photos chosen earlier show up again when you come back
 
   return {
     async beforeNext() {
+      if (manual) return true;
       error.textContent = '';
+      fallback.hidden = true;
       if (state.files.length === 0) {
         error.textContent = 'Add at least one photo to continue.';
         return false;
@@ -86,6 +100,7 @@ export function mountUpload(root) {
         return true;
       } catch (err) {
         error.textContent = friendlyError(err);
+        fallback.hidden = false;
         return false;
       }
     },

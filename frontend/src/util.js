@@ -43,5 +43,8 @@ export function friendlyError(error) {
   if (error instanceof TypeError) {
     return "Can't reach the server. Make sure the backend is running, then try again.";
   }
-  return error.message || 'Something went wrong. Please try again.';
+  const message = error?.message;
+  // api/client.js falls back to "Request failed: 500" when the backend sent no message of its own
+  if (!message || /^Request failed: \d+$/.test(message)) return 'Something went wrong. Please try again.';
+  return message;
 }

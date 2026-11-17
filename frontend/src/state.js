@@ -9,7 +9,8 @@
 
 const state = {
   files: [],          // photos the user picked
-  detectedFor: null,  // which photos the ingredient list was last detected from
+  detectedFor: null,  // which photos the ingredient list was last detected from (MANUAL = skipped detection)
+  noneFound: false,   // detection worked but spotted no food (Review explains this)
   ingredients: [],    // [{ name, checked, manual }] shown on the Review step
   detections: [],     // [{ name, photo, box: [ymin, xmin, ymax, xmax] }] boxes on the photos (0-1000 scale)
   detectedPhotos: [], // the resized photos sent for detection; Review draws the boxes on these
@@ -18,6 +19,10 @@ const state = {
   recipesFor: null,   // the request those results belong to
   swapsFor: null,     // the request whose recipes already have their smart swaps
 };
+
+// Marks "the user skipped photo detection". It never equals a photos signature,
+// so pressing Next on Upload will still try to detect when they come back.
+const MANUAL = 'manual';
 
 export function getState() {
   return state;
@@ -77,6 +82,16 @@ export function applyDetected(names, signature, detections = [], photos = []) {
 
   state.ingredients = [...fromPhotos, ...typedIn];
   state.detectedFor = signature;
+  state.noneFound = names.length === 0;
+}
+
+// Detection failed and the user chose to type their foods in by hand.
+// Lets the Review step open (see canEnter in wizard.js) without any detections.
+export function startManually() {
+  state.detectedPhotos = [];
+  state.detections = [];
+  state.detectedFor = MANUAL;
+  state.noneFound = false;
 }
 
 // Returns 'added', 'exists' or 'empty'.
@@ -84,6 +99,7 @@ export function addIngredient(raw) {
   const name = normalizeName(raw);
   if (!name) return 'empty';
   state.removed.delete(name);
+  state.noneFound = false;
   const existing = state.ingredients.find((item) => item.name === name);
   if (existing) {
     existing.checked = true;
