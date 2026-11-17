@@ -88,6 +88,8 @@ export function applyDetected(names, signature, detections = [], photos = []) {
 // Detection failed and the user chose to type their foods in by hand.
 // Lets the Review step open (see canEnter in wizard.js) without any detections.
 export function startManually() {
+  // Keep only foods the user typed in; foods from earlier photos would be stale
+  state.ingredients = state.ingredients.filter((item) => item.manual);
   state.detectedPhotos = [];
   state.detections = [];
   state.detectedFor = MANUAL;

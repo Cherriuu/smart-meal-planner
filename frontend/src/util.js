@@ -38,6 +38,23 @@ export async function resizePhoto(file, maxSide = 1600, quality = 0.85) {
   }
 }
 
+// An ingredient amount as people write it: 2 -> "2", 0.5 -> "½", 2.33 -> "2⅓", 1.2 -> "1.2".
+// 0 or nothing gives '' so the amount is left out.
+const FRACTIONS = [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾']];
+
+export function formatAmount(amount) {
+  const value = Number(amount);
+  if (!amount || !Number.isFinite(value) || value <= 0) return '';
+  const whole = Math.floor(value);
+  const rest = value - whole;
+  // Close to a common fraction (0.333333 counts as ⅓)
+  const fraction = FRACTIONS.find(([part]) => Math.abs(rest - part) <= 0.03);
+  if (fraction) return `${whole || ''}${fraction[1]}`;
+  // Otherwise one decimal, without a trailing ".0" (3.0 -> "3"); tiny amounts keep two decimals
+  const rounded = Math.round(value * 10) / 10 || Math.round(value * 100) / 100;
+  return rounded ? String(rounded) : '';
+}
+
 // A message a person can understand, for a failed request.
 export function friendlyError(error) {
   if (error instanceof TypeError) {

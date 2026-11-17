@@ -2,7 +2,7 @@
 import { getState, checkedIngredients } from '../state.js';
 import { getPreferences } from '../preferences.js';
 import { getRecipes, getSwaps } from '../api/client.js';
-import { escapeHtml, friendlyError } from '../util.js';
+import { escapeHtml, friendlyError, formatAmount } from '../util.js';
 
 function buildRequest() {
   const prefs = getPreferences();
@@ -52,7 +52,7 @@ function suggestionsFor(prefs) {
 function recipeCard(recipe) {
   const meta = [
     recipe.readyInMinutes != null ? `${recipe.readyInMinutes} min` : null,
-    recipe.calories != null ? `${recipe.calories} cal` : null,
+    recipe.calories != null ? `${recipe.calories} cal/serving` : null,
     recipe.servings != null ? `${recipe.servings} servings` : null,
   ].filter(Boolean).join(' · ');
   const missing = missingText(recipe)
@@ -60,7 +60,7 @@ function recipeCard(recipe) {
     : '';
 
   const ingredients = recipe.ingredients
-    .map((i) => `<li>${escapeHtml([i.amount, i.unit, i.name].filter((part) => part !== '' && part != null).join(' '))}</li>`)
+    .map((i) => `<li>${escapeHtml([formatAmount(i.amount), i.unit, i.name].filter((part) => part !== '' && part != null).join(' '))}</li>`)
     .join('');
   const steps = recipe.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
   const equipment = (recipe.appliances ?? []).map((name) => `<li>${escapeHtml(name)}</li>`).join('');
@@ -100,10 +100,12 @@ export function mountRecipes(root) {
   root.querySelector('#settings-summary').textContent = settingsSummary(getPreferences());
 
   // Same as clicking "Preferences" in the step bar: the wizard listens for the URL change.
-  root.addEventListener('click', (event) => {
+  // root is shared by every step, so unmount() removes this again.
+  function onNavClick(event) {
     if (event.target.closest('[data-edit-prefs]')) location.hash = '#/preferences';
     else if (event.target.closest('[data-back-review]')) location.hash = '#/review';
-  });
+  }
+  root.addEventListener('click', onNavClick);
 
   function showResults(recipes) {
     if (recipes.length) {
@@ -184,6 +186,7 @@ export function mountRecipes(root) {
   return {
     unmount() {
       active = false;
+      root.removeEventListener('click', onNavClick);
     },
   };
 }
