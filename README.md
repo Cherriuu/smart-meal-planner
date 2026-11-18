@@ -1,67 +1,123 @@
-# Smart Meal Planner (GWC Group Project)
+<div align="center">
 
-A web application that generates personalized recipe recommendations based on available ingredients, dietary preferences, kitchen appliances, serving sizes, and occasions. The application will use computer vision to identify ingredients from uploaded photos, allowing users to discover recipes they can prepare with what they already have.
+<img src="docs/img/mascot.png" alt="Smart Meal Planner mascot" width="160">
 
-## Proposed Features
+# Smart Meal Planner
 
-- **Kitchen Appliances:** Users can select which appliances they have available (e.g., oven, microwave, air fryer, toaster). Recipes requiring unavailable appliances will be excluded.
-- **Dietary and Nutritional Preferences:** Users can specify calorie goals and nutritional preferences, such as higher protein or lower sugar intake.
-- **Pantry Inventory (Computer Vision):** Users can upload photos of their available ingredients. Computer vision will identify the ingredients, and users can review or manually adjust the results. Spoonacular will take out of account simple pantry ingredients such as salt, pepper, etc.
-- Users should be able to review detected ingredients and approve of it before getting any recipes
-- **Ingredient-Based Recipe Recommendations:** The application will recommend recipes that can be prepared using the user's available ingredients, without requiring additional grocery purchases.
-- **Serving Sizes:** Users can specify how many people they are cooking for, allowing recipe quantities to be adjusted accordingly.
-- **Occasion Selection:** Users can choose an occasion, such as a casual meal, family dinner, birthday party, potluck, or holiday gathering. Recipe recommendations will be tailored to the selected occasion.
-- **Recipe Sorting:** Matching recipes will be displayed in order of shortest to longest total preparation and cooking time.
+**Your fridge is already a recipe.** Snap a photo, and AI turns whatever you have into meals you can cook tonight.
 
+[![Girls Who Code](https://img.shields.io/badge/Girls%20Who%20Code-Projects%20Program%20Fall%202026-134f85)](https://projects-program-fall-2026.devpost.com/)
+![Gemini](https://img.shields.io/badge/AI%20vision-Gemini-4285F4)
+![Spoonacular](https://img.shields.io/badge/recipes-Spoonacular-f6b6cc)
+![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
 
-## Tech Stack
+<img src="docs/img/app.png" alt="Smart Meal Planner showing recipes found from a fridge photo" width="100%">
 
-| Area | Technology |
-|------|------------|
-| Frontend | JavaScript, HTML, CSS |
-| Dev environment | Node.js |
-| Backend | Python, FastAPI |
-| Computer vision | Gemini |
-| Recipe data API | Spoonacular |
-| Database |  Will be implemented depending on other features or changes |
-| Deployment | TBD |
+</div>
 
-## Running the backend
+## Overview
 
-1. Go into the backend folder:
-   ```bash
-   cd backend
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   # Mac
-   python3 -m venv venv
-   source venv/bin/activate
+Every week, food goes bad in the fridge while we order takeout, because we can't see a meal in a few eggs, half a bag of spinach and some cheese. Recipe sites don't help. They start from a shopping list, not from what you own, and they don't know you only have a microwave, that you're cooking for a potluck, or that you're staying under 500 calories.
 
-   # Windows
-   python -m venv venv
-   venv\Scripts\activate
-   ```
-3. Install the dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Create your `.env` file. Leave the keys blank to use the sample data:
-   ```bash
-   cp .env.example .env
-   ```
-5. Start the server:
-   ```bash
-   uvicorn main:app --reload
-   ```
-6. Check that it works:
-   - http://localhost:8000/health should return `"status": "ok"`
-   - http://localhost:8000/docs shows every endpoint, and you can try them from there
+Smart Meal Planner flips it. **AI vision reads your fridge**, a **custom matching engine** works out which recipes you can actually make with your food, your kitchen and your goals, and **AI smart swaps** fill the gaps with what's already on your shelf. No typing out ingredients, no extra trip to the store.
+
+## Try it
+
+- **Live app:** [ADD YOUR DEPLOYED LINK]
+- **Run it locally:** works out of the box with built-in sample data, no API keys required ([Getting started](#getting-started))
+
+## How it works
+
+<table>
+  <tr>
+    <td width="64" align="center"><img src="docs/img/camera.png" width="48" alt=""></td>
+    <td><b>AI photo detection.</b> Upload up to 5 photos of your fridge, pantry or groceries. Gemini identifies every food and draws a labeled bounding box around each one, right on your photo. If the main model is overloaded, the backend falls back to a second model automatically.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/img/egg.png" width="48" alt=""></td>
+    <td><b>You stay in control.</b> Tap any box to drop a wrong guess, or type in what the camera missed. The photo and the list stay in sync.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/img/oven.png" width="48" alt=""></td>
+    <td><b>Built around your kitchen.</b> Tell it your appliances (oven, microwave, air fryer, stovetop, toaster), the occasion (casual, family dinner, birthday, potluck, holiday), servings, a calorie cap per serving, and high-protein or low-sugar goals. Recipes that need an oven you don't have never show up.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/img/recipe_book.png" width="48" alt=""></td>
+    <td><b>A matching engine that thinks like a cook.</b> Spoonacular supplies candidate recipes. Our backend then decides what you actually have: "cherry tomatoes" count as tomato, your "chicken breast" covers a recipe's "chicken", but "chicken broth" doesn't, and basics like salt, oil and flour are assumed. Recipes are ranked by fewest missing ingredients, then by how many of <i>your</i> foods they use, then by speed, with every amount scaled to your servings.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/img/sparkle.png" width="48" alt=""></td>
+    <td><b>AI smart swaps.</b> Missing one ingredient? Gemini suggests a substitute from the foods you already have ("No sour cream? Use your Greek yogurt"), checked by the backend so it can only recommend something that's really in your fridge.</td>
+  </tr>
+</table>
+
+```mermaid
+flowchart LR
+    A["Fridge photos"] --> B["Gemini vision<br/>foods + boxes"]
+    B --> C["You confirm<br/>the list"]
+    P["Your kitchen<br/>and goals"] --> D
+    C --> D["Spoonacular<br/>candidates"]
+    D --> E["Matching engine<br/>have · missing · fits"]
+    E --> F["Top 5 recipes<br/>scaled to servings"]
+    F --> G["Gemini<br/>smart swaps"]
+```
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/img/preferences.png" alt="Preferences step"><br><sub><b>Your kitchen.</b> Appliances, occasion and goals.</sub></td>
+    <td width="33%"><img src="docs/img/review.png" alt="Review step with boxes on a fridge photo"><br><sub><b>AI detection.</b> Every food boxed and labeled.</sub></td>
+    <td width="33%"><img src="docs/img/recipes.png" alt="Recipe cards"><br><sub><b>Recipes.</b> What you have, what you'd need, and a swap.</sub></td>
+  </tr>
+</table>
+
+## Under the hood
+
+- **Fast and cheap by design:** photos are compressed in the browser before upload, a single recipe search returns everything needed, and repeat searches are cached, so changing servings or appliances costs nothing.
+- **Never a dead end:** if photo detection fails, you can keep going by adding foods by hand, and every error is a friendly message.
+- **Built to run in public:** daily usage caps, upload checks before anything reaches the AI, and API keys that never leave the server.
+- **Tested:** 51 automated checks cover the ingredient-matching rules.
+- **For everyone:** keyboard and screen-reader friendly, works on phones, and respects reduced-motion settings.
+- **Original pixel art:** a custom mascot who reacts at every step, plus hand-drawn appliance icons.
+
+## Getting started
+
+Needs Python 3.10+ and Node.js 20+. API keys are optional: leave them blank to use sample data.
+
+```bash
+# Backend: http://localhost:8000
+cd backend
+python3 -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                  # add SPOONACULAR_API_KEY and GEMINI_API_KEY, or leave blank
+uvicorn main:app --reload
+
+# Frontend: http://localhost:5173
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Tests: `cd backend && python test_matching.py`
+
+| Part | Path |
+| --- | --- |
+| Step-by-step app | `frontend/src/wizard.js`, `frontend/src/steps/` |
+| Mascot and pixel art | `frontend/src/assets/pixel/` |
+| AI detection, matching engine, ranking, swaps | `backend/main.py` |
+| Sample data | `backend/sample_data/` |
 
 ## Team
 
-| Role | Members | Tasks | 
-|------|---------|-------|
-| Frontend | Rhea, Adiam | User interface, image upload, preferences selection, recipe display |
-| Backend | Jesica | API development, computer vision integration, recipe recommendation logic |
+| | Role | What they built |
+| --- | --- | --- |
+| **Jesica Bermudes** | Tech lead · Backend | AI photo detection, matching engine and ranking, smart swaps, deployment |
+| **Rhea Jacob** | Frontend · App flow | Step-by-step app, photo upload and review screens, recipe cards, backend connection |
+| **Adiam Teka** | Frontend · Design | Figma screen designs, the shared style system (colors, fonts, buttons, cards, phone-friendly layout), preferences page with input checks and saved settings |
+
+<div align="center">
+<br>
+<img src="docs/img/heart.png" width="32" alt=""><br>
+<sub>Built for the Girls Who Code Projects Program, Fall 2026.</sub>
+</div>
 
