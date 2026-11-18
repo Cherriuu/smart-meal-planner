@@ -441,7 +441,8 @@ def health():
 
 def suggest_swaps_with_gemini(recipes, user_foods):
     # One request for all recipes; returns {recipe id: {missing ingredient: suggested food}}
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 8000})
+    # Gemini rejects deadlines under 10 s ("Minimum allowed deadline is 10s")
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 15000})
     payload = {
         "userFoods": user_foods,
         "recipes": [
@@ -458,6 +459,7 @@ def suggest_swaps_with_gemini(recipes, user_foods):
         model=SWAP_MODEL,
         contents=[prompt],
         config={
+            "thinking_config": {"thinking_level": "minimal"},
             "response_mime_type": "application/json",
             "response_json_schema": {
                 "type": "array",
