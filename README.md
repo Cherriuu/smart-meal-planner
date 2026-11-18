@@ -62,7 +62,6 @@ flowchart LR
 - **Built to run in public:** daily usage caps, upload checks before anything reaches the AI, and API keys that never leave the server.
 - **Tested:** 51 automated checks cover the ingredient-matching rules.
 - **For everyone:** keyboard and screen-reader friendly, works on phones, and respects reduced-motion settings.
-- **Original pixel art:** a custom mascot who reacts at every step, plus hand-drawn appliance icons.
 
 ## Tech stack
 
