@@ -6,8 +6,6 @@
 
 **Your fridge is already a recipe.** Snap a photo, and AI turns whatever you have into meals you can cook tonight.
 
-<img src="docs/img/app.png" alt="Smart Meal Planner showing recipes found from a fridge photo" width="100%">
-
 </div>
 
 ## Overview
