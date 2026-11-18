@@ -6,11 +6,6 @@
 
 **Your fridge is already a recipe.** Snap a photo, and AI turns whatever you have into meals you can cook tonight.
 
-[![Girls Who Code](https://img.shields.io/badge/Girls%20Who%20Code-Projects%20Program%20Fall%202026-134f85)](https://projects-program-fall-2026.devpost.com/)
-![Gemini](https://img.shields.io/badge/AI%20vision-Gemini-4285F4)
-![Spoonacular](https://img.shields.io/badge/recipes-Spoonacular-f6b6cc)
-![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
-
 <img src="docs/img/app.png" alt="Smart Meal Planner showing recipes found from a fridge photo" width="100%">
 
 </div>
@@ -20,11 +15,6 @@
 Every week, food goes bad in the fridge while we order takeout, because we can't see a meal in a few eggs, half a bag of spinach and some cheese. Recipe sites don't help. They start from a shopping list, not from what you own, and they don't know you only have a microwave, that you're cooking for a potluck, or that you're staying under 500 calories.
 
 Smart Meal Planner flips it. **AI vision reads your fridge**, a **custom matching engine** works out which recipes you can actually make with your food, your kitchen and your goals, and **AI smart swaps** fill the gaps with what's already on your shelf. No typing out ingredients, no extra trip to the store.
-
-## Try it
-
-- **Live app:** [ADD YOUR DEPLOYED LINK]
-- **Run it locally:** works out of the box with built-in sample data, no API keys required ([Getting started](#getting-started))
 
 ## How it works
 
@@ -53,20 +43,17 @@ Smart Meal Planner flips it. **AI vision reads your fridge**, a **custom matchin
 
 ```mermaid
 flowchart LR
-    A["Fridge photos"] --> B["Gemini vision<br/>foods + boxes"]
+    A["Fridge photos"] --> B["Gemini<br/>finds every food"]
     B --> C["You confirm<br/>the list"]
-    P["Your kitchen<br/>and goals"] --> D
-    C --> D["Spoonacular<br/>candidates"]
-    D --> E["Matching engine<br/>have · missing · fits"]
-    E --> F["Top 5 recipes<br/>scaled to servings"]
-    F --> G["Gemini<br/>smart swaps"]
+    C --> D["Matching engine<br/>+ Spoonacular"]
+    K["Your kitchen<br/>and goals"] --> D
+    D --> E["Recipes +<br/>smart swaps"]
 ```
 
 <table>
   <tr>
-    <td width="33%"><img src="docs/img/preferences.png" alt="Preferences step"><br><sub><b>Your kitchen.</b> Appliances, occasion and goals.</sub></td>
-    <td width="33%"><img src="docs/img/review.png" alt="Review step with boxes on a fridge photo"><br><sub><b>AI detection.</b> Every food boxed and labeled.</sub></td>
-    <td width="33%"><img src="docs/img/recipes.png" alt="Recipe cards"><br><sub><b>Recipes.</b> What you have, what you'd need, and a swap.</sub></td>
+    <td width="50%"><img src="docs/img/preferences.png" alt="Preferences step with appliance tiles"><br><sub><b>Your kitchen.</b> Appliances, occasion and goals.</sub></td>
+    <td width="50%"><img src="docs/img/recipes.png" alt="Recipe cards"><br><sub><b>Recipes.</b> How much you already have, and what you'd still need.</sub></td>
   </tr>
 </table>
 
@@ -79,9 +66,18 @@ flowchart LR
 - **For everyone:** keyboard and screen-reader friendly, works on phones, and respects reduced-motion settings.
 - **Original pixel art:** a custom mascot who reacts at every step, plus hand-drawn appliance icons.
 
+## Tech stack
+
+| | |
+| --- | --- |
+| Frontend | HTML, CSS, JavaScript, Vite |
+| Backend | Python, FastAPI |
+| AI | Google Gemini (photo detection and smart swaps) |
+| Recipe data | Spoonacular API |
+
 ## Getting started
 
-Needs Python 3.10+ and Node.js 20+. API keys are optional: leave them blank to use sample data.
+Needs Python 3.10+ and Node.js 20+. API keys are optional: leave them blank to use the built-in sample data.
 
 ```bash
 # Backend: http://localhost:8000
@@ -120,4 +116,3 @@ Tests: `cd backend && python test_matching.py`
 <img src="docs/img/heart.png" width="32" alt=""><br>
 <sub>Built for the Girls Who Code Projects Program, Fall 2026.</sub>
 </div>
-
